@@ -1,0 +1,106 @@
+# ============================================================================#
+#
+#  Buy the Rumor, Sell the News: When Is News Priced In?  --  requirements.txt
+#
+#  Pinned third-party dependencies of the notebook
+#  buy_the_rumor_sell_the_news_draft.ipynb, the complete implementation of
+#  the analytical framework presented in "Buy the Rumor, Sell the News: When
+#  Is News Priced In?" by Alireza Kargarzadeh, Nariman Khaledian, Navid
+#  Parvini, Sid Ghatak and Arman Khaledian (2026): a placebo-controlled,
+#  provenance-tracked event-feature store that converts public text about
+#  assets into tagged, deduplicated and cost-bounded event records and
+#  measures their price impact against an exposure-matched control.
+#
+#  Install:
+#  • python -m pip install -r requirements.txt
+#
+#  Scope and conventions:
+#  • Interpreter: Python 3.13 (verified on CPython 3.13.9). pip cannot pin
+#    the interpreter; install it first.
+#  • Every pin is the exact version installed in the verification
+#    environment in which the notebook's 40 task cells, its 28-stage
+#    pipeline (run_full_pipeline_task_29) and the usage example ran.
+#  • Every import of the notebook's import cell is covered. The standard
+#    library modules (ast, bisect, collections.abc, contextlib, copy,
+#    ctypes, ctypes.wintypes, dataclasses, datetime, fractions, functools,
+#    hashlib, heapq, importlib, inspect, io, json, logging, math, numbers,
+#    os, pathlib, pickle, random, re, shutil, struct, sys, tempfile, time,
+#    typing, unicodedata, urllib.parse, warnings, zlib, zoneinfo, and the
+#    POSIX-only resource) ship with Python and are not listed.
+#  • zoneinfo reads the operating system's IANA timezone database. Where
+#    none exists (Windows), it falls back to the tzdata package, which
+#    pandas installs as a dependency.
+#  • Lines are distribution names, which differ from import names where
+#    noted (Jinja2 for jinja2, PyYAML for yaml, Faker for faker).
+#  • Transitive dependencies (for example requests, filelock and
+#    idna for tldextract; python-dateutil and tzdata for pandas) are
+#    resolved by pip and not pinned here.
+#
+#  Paper Reference:
+#  Kargarzadeh, A., Khaledian, N., Parvini, N., Ghatak, S., & Khaledian, A.
+#  (2026). Buy the Rumor, Sell the News: When Is News Priced In? 3rd Workshop
+#  on LLMs and Generative AI for Finance (AI4F 2026), ICAIF 2026, Milan.
+#  arXiv preprint arXiv:2608.14014.
+#  https://arxiv.org/abs/2608.14014
+#
+#  Author: CS Chirinda
+#  License: MIT
+#  Version: 1.0.0
+#
+# ============================================================================#
+
+# --- Core numerical and data stack -------------------------------------------
+# import numpy as np: arrays, linear algebra, seeded random generators.
+numpy==2.3.5
+# import pandas as pd: every DataFrame of the pipeline.
+pandas==2.3.3
+# from scipy import stats as scipy_stats; from scipy.sparse import
+# csr_matrix; from scipy.sparse.csgraph import connected_components:
+# t-tests (Task 39) and the single-link story components (Task 21).
+scipy==1.16.3
+# import pyarrow, pyarrow as pa, pyarrow.parquet as pq: memory-mapped
+# Parquet ingestion (Task 1) and every Parquet artefact.
+pyarrow==21.0.0
+
+# --- Market calendar -----------------------------------------------------------
+# import exchange_calendars as xc: XNYS sessions, half days and the
+# canonical session list audited by Task 6.
+exchange_calendars==4.13.2
+
+# --- Text and provenance -------------------------------------------------------
+# import tldextract: registrable source domains on the public suffix list
+# (Tasks 3 and 36).
+tldextract==5.1.2
+
+# --- Deep learning -------------------------------------------------------------
+# import torch: the distilroberta-base student's training, warm start and
+# deployment (Tasks 15, 17 and 18). A CPU build suffices; for a CUDA build,
+# use the index URL that pytorch.org gives for your platform.
+torch==2.15.0
+
+# --- Reporting -----------------------------------------------------------------
+# import matplotlib, matplotlib.pyplot as plt: the decay-curve panels
+# (Task 20) and the five figures (Task 40); rendered with the Agg backend.
+matplotlib==3.10.6
+# from jinja2 import Template: the reproduction report of Task 40.
+Jinja2==3.1.6
+
+# --- Usage example only --------------------------------------------------------
+# from faker import Faker: synthetic issuers, bylines, slugs and prose.
+Faker==40.44.0
+# import yaml: reads config.yaml into the configuration dictionary.
+PyYAML==6.0.3
+
+# --- Jupyter -------------------------------------------------------------------
+# Runs buy_the_rumor_sell_the_news_draft.ipynb.
+notebook==7.4.5
+ipykernel==6.31.0
+
+# --- Optional ------------------------------------------------------------------
+# import sentence_transformers: needed only by Task 19's default story
+# encoder (DEF2: sentence-transformers/all-MiniLM-L6-v2, d = 384). The
+# notebook binds it to None when absent, and Task 19 then requires an
+# injected encoder (as the usage example supplies). It was not installed in
+# the verification environment, so no version is pinned or verified here;
+# uncomment to install the current release.
+# sentence-transformers
