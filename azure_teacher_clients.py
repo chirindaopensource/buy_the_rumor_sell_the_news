@@ -110,11 +110,15 @@ RETRYABLE_STATUS: Tuple[int, ...] = (408, 409, 429, 500, 502, 503, 504)
 
 
 class TeacherConfigurationError(ValueError):
-    """A provenance or configuration mismatch that must halt the run.
+    """
+    Raised when a provenance or configuration mismatch must halt the run.
 
-    It derives from ValueError, which none of the notebook's retry loops
-    catch, so the stage fails instead of silently relabelling under a
-    drifted prompt.
+        A call made under a different prompt version, model or system prompt,
+        or a template whose digest does not match its declared version, would
+        relabel articles under a drifted prompt and break the provenance every
+        teacher label records. The exception subclasses ``ValueError``, which
+        none of the notebook's retry loops catch, so the stage fails instead of
+        silently spending calls on the wrong contract.
     """
 
 
@@ -124,15 +128,54 @@ class TeacherConfigurationError(ValueError):
 
 
 def whitespace_token_count(text: str) -> int:
-    """Count whitespace tokens: the notebook's default counter (Task 12/13)."""
+    """
+    Count the whitespace-separated tokens of a text.
+
+        This is the notebook's default counter (Tasks 12 and 13), which the
+        pipeline uses because stage 13 receives no ``count_tokens``. Using it
+        here keeps the ID-only services' truncation identical to Task 13's.
+
+        Parameters
+        ----------
+        text : str
+            The text to count.
+
+        Returns
+        -------
+        int
+            The number of whitespace-separated tokens.
+
+        Examples
+        --------
+        >>> whitespace_token_count("Revenue rose 12% on earnings.")
+        5
+    """
     return len(text.split())
 
 
 def tiktoken_counter(encoding_name: str = "o200k_base") -> Callable[[str], int]:
-    """Return a BPE token counter for the gpt-5 family's tokenizer.
+    """
+    Build a BPE token counter for the gpt-5 family's tokenizer.
 
-    Only use it if Task 13 receives the same counter (``count_tokens``);
-    otherwise Tasks 13 and 16-18 would truncate articles differently.
+        The counter is exact where the whitespace default is an approximation,
+        but it changes which characters survive truncation. Use it only if
+        Task 13 receives the same counter through ``count_tokens``; otherwise
+        Tasks 13 and 16-18 would send the teacher differently truncated text.
+
+        Parameters
+        ----------
+        encoding_name : str, optional
+            The ``tiktoken`` encoding name. Defaults to ``"o200k_base"``.
+
+        Returns
+        -------
+        Callable[[str], int]
+            A function returning the token count of its argument.
+
+        Raises
+        ------
+        ImportError
+            If the optional ``tiktoken`` package is not installed.
     """
     import tiktoken  # optional dependency
 
@@ -148,14 +191,50 @@ def compose_article_suffix(
     max_context_length_tokens: Optional[int],
     count_tokens: Callable[[str], int] = whitespace_token_count,
 ) -> Tuple[str, bool]:
-    """Join and truncate the article exactly as Task 13 does.
+    """
+    Join and truncate the article exactly as Task 13 does.
 
-    The suffix is ``title + "\\n\\n" + body`` (a blank part is dropped with the
-    separator), and the longest character prefix whose token count fits
-    ``window - max_output_tokens - count(prompt_prefix)`` is kept.
+        Re-implements ``_compose_teacher_suffix_task_13`` so that the ID-only
+        services send the teacher the same text Task 13 would. The candidate
+        suffix is ``title + "\\n\\n" + body``, except that a part which is empty
+        after stripping is dropped together with the separator. The remaining
+        budget is the context window less the output allowance and the token
+        count of ``prompt_prefix``; the longest character prefix of the
+        candidate whose token count fits that budget is returned. An article
+        with no text at all yields the empty suffix, which Task 13 also sends.
 
-    Returns ``(text, truncated)``. Raises ValueError if the budget is
-    non-positive.
+        Parameters
+        ----------
+        title : str
+            The article's title.
+        body : str
+            The article's body.
+        prompt_prefix : str
+            The cached prompt text that precedes the suffix.
+        max_output_tokens : int
+            The output allowance (Task 12's ``max_output_tokens``).
+        max_context_length_tokens : Optional[int]
+            The context window (DEF15); ``None`` disables truncation.
+        count_tokens : Callable[[str], int], optional
+            The token counter. Defaults to :func:`whitespace_token_count`.
+
+        Returns
+        -------
+        Tuple[str, bool]
+            ``(text, truncated)`` where ``truncated`` is ``True`` exactly when the
+            returned text is shorter than the candidate suffix.
+
+        Raises
+        ------
+        ValueError
+            If the remaining budget is non-positive.
+
+        Examples
+        --------
+        >>> compose_article_suffix("Markets", "", "prefix", 16, None)
+        ('Markets', False)
+        >>> compose_article_suffix("Markets", "Stocks rose.", "prefix", 2, 5)[1]
+        True
     """
     title_blank = title.strip() == ""
     body_blank = body.strip() == ""
@@ -197,12 +276,30 @@ def compose_article_suffix(
 
 
 def api_response_schema(task12_schema: Mapping[str, Any]) -> Dict[str, Any]:
-    """Reduce Task 12's schema to the subset Azure strict structured outputs accept.
+    """
+    Reduce Task 12's schema to the subset Azure strict structured outputs accept.
 
-    Strict mode supports type / properties / enum / required /
-    additionalProperties but not the ``allOf`` if/then branches Task 12 uses
-    to forbid ``secondary_tag == primary_tag``, nor ``x_*`` metadata. That one
-    rule is therefore enforced locally by :func:`validate_label`.
+        Strict mode supports ``type``, ``properties``, ``enum``, ``required`` and
+        ``additionalProperties`` but not the ``allOf`` if/then branches Task 12
+        uses to forbid ``secondary_tag == primary_tag``, nor the ``x_*``
+        metadata block. The seven properties, their enums and the closed object
+        are kept verbatim; the one dropped rule is enforced locally by
+        :func:`validate_label`.
+
+        Parameters
+        ----------
+        task12_schema : Mapping[str, Any]
+            The return value of ``build_teacher_response_schema_task_12``.
+
+        Returns
+        -------
+        Dict[str, Any]
+            A closed JSON Schema over exactly the seven contract fields.
+
+        Raises
+        ------
+        TeacherConfigurationError
+            If the schema does not declare exactly the seven contract fields.
     """
     properties = task12_schema.get("properties")
     if not isinstance(properties, Mapping) or set(properties) != set(CONTRACT_FIELDS):
@@ -225,11 +322,41 @@ def api_response_schema(task12_schema: Mapping[str, Any]) -> Dict[str, Any]:
 def validate_label(
     reply: Any, taxonomy: Tuple[str, ...]
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """Check one teacher reply against the frozen seven-field contract.
+    """
+    Check one teacher reply against the frozen seven-field contract.
 
-    Accepts a JSON string or a mapping. Returns ``(label, None)`` with
-    ``secondary_tag`` normalised to None when the teacher reports "none", or
-    ``(None, reason)`` when the reply is unusable.
+        The reply must be a JSON object carrying exactly the seven fields; the
+        primary tag must be one of the declared tags; the secondary tag must be
+        one of them or the ``"none"`` literal, and may not repeat the primary
+        tag; and the five attributes must be booleans. Task 17 halts on an
+        off-taxonomy tag, so the check runs before any service returns a label.
+
+        Parameters
+        ----------
+        reply : Any
+            The reply, as a JSON string or an already decoded mapping.
+        taxonomy : Tuple[str, ...]
+            The seventeen admissible tag names.
+
+        Returns
+        -------
+        Tuple[Optional[Dict[str, Any]], Optional[str]]
+            ``(label, None)`` with ``secondary_tag`` normalised to ``None`` when
+            the teacher reports no second event, or ``(None, reason)`` when the
+            reply is unusable.
+
+        Examples
+        --------
+        >>> validate_label(
+        ...     '{"primary_tag": "M&A deal", "secondary_tag": "none", '
+        ...     '"scheduled": false, "forward_looking": true, '
+        ...     '"primary_source": false, "quantified": false, "rumor": true}',
+        ...     ("M&A deal", "Earnings results"),
+        ... )[0]["secondary_tag"] is None
+        True
+        >>> validate_label('{"primary_tag": "Weather"}', ("M&A deal",))[1]
+        "missing fields ['secondary_tag', 'scheduled', 'forward_looking', \
+'primary_source', 'quantified', 'rumor']"
     """
     if isinstance(reply, (str, bytes)):
         try:
@@ -269,7 +396,21 @@ def validate_label(
 
 
 def _teacher_env_names(study_config: Optional[Mapping[str, Any]]) -> Dict[str, str]:
-    """Read the env-var names from llm_api.teacher, falling back to the defaults."""
+    """
+    Read the teacher's environment-variable names from the study configuration.
+
+        Parameters
+        ----------
+        study_config : Optional[Mapping[str, Any]]
+            The study configuration, whose ``llm_api.teacher`` block names the
+            variables, or ``None``.
+
+        Returns
+        -------
+        Dict[str, str]
+            The four variable names, falling back to :data:`DEFAULT_ENV_VARS`
+            for any the configuration leaves unset.
+    """
     names = dict(DEFAULT_ENV_VARS)
     block = ((study_config or {}).get("llm_api") or {}).get("teacher") or {}
     for key in names:
@@ -279,7 +420,25 @@ def _teacher_env_names(study_config: Optional[Mapping[str, Any]]) -> Dict[str, s
 
 
 def resolve_deployment(study_config: Optional[Mapping[str, Any]] = None) -> str:
-    """Return the Azure deployment name from its environment variable."""
+    """
+    Return the Azure deployment name from its environment variable.
+
+        Parameters
+        ----------
+        study_config : Optional[Mapping[str, Any]], optional
+            The study configuration naming the variable. Defaults to ``None``,
+            which reads ``AZURE_OPENAI_DEPLOYMENT``.
+
+        Returns
+        -------
+        str
+            The deployment name.
+
+        Raises
+        ------
+        TeacherConfigurationError
+            If the variable is unset or empty.
+    """
     variable = _teacher_env_names(study_config)["deployment_name_env_var"]
     deployment = os.environ.get(variable)
     if not deployment:
@@ -292,12 +451,31 @@ def build_azure_client(
     *,
     timeout: float = 60.0,
 ) -> "openai.AzureOpenAI":
-    """Build an AzureOpenAI client from the environment variables config.yaml names.
+    """
+    Build an Azure OpenAI client from the environment variables config.yaml names.
 
-    The key is read from the environment and never stored in the config (the
-    study's ``api_key: null``). The SDK's own retries are switched off
-    (``max_retries=0``) so that :class:`AzureTeacher` sees and counts every
-    attempt.
+        The key is read from the environment and never stored in the
+        configuration, which keeps the study's ``api_key: null``. The SDK's own
+        retries are switched off (``max_retries=0``) so that
+        :class:`AzureTeacher` sees and counts every attempt.
+
+        Parameters
+        ----------
+        study_config : Optional[Mapping[str, Any]], optional
+            The study configuration naming the variables. Defaults to ``None``,
+            which reads the :data:`DEFAULT_ENV_VARS` names.
+        timeout : float, optional
+            The per-request timeout in seconds. Keyword-only; defaults to 60.0.
+
+        Returns
+        -------
+        openai.AzureOpenAI
+            The configured client.
+
+        Raises
+        ------
+        TeacherConfigurationError
+            If the key, endpoint or API-version variable is unset or empty.
     """
     names = _teacher_env_names(study_config)
     values = {}
@@ -325,48 +503,102 @@ ArticleSource = Union[pd.DataFrame, str, os.PathLike, Callable[[], pd.DataFrame]
 
 
 class AzureTeacher:
-    """The study's gpt-5-mini teacher on Azure OpenAI, behind the notebook's three service shapes.
+    """
+    The study's gpt-5-mini teacher on Azure OpenAI, behind the notebook's three service shapes.
 
-    Parameters
-    ----------
-    prompt_template, response_schema, decoding_config : Mapping
-        Task 12's three payloads, i.e. the return values of
-        ``build_teacher_prompt_template_task_12(STUDY_CONFIG)``,
-        ``build_teacher_response_schema_task_12(STUDY_CONFIG)`` and
-        ``build_teacher_decoding_config_task_12(STUDY_CONFIG)``. They are pure
-        functions of the configuration, so they equal what stage 12 produces.
-    articles : DataFrame, path or zero-argument callable
-        The corpus the ID-only services resolve text from: the cleansed
-        ``retained_articles_c`` that Task 13 labels. A path (Parquet or
-        pickle) or callable is read lazily on the first ID-only call, so it
-        can point at ``<output_dir>/stage_outputs/retained_articles_c.parquet``,
-        which stage 3 writes before any teacher stage runs.
-    client : optional
-        An ``openai.AzureOpenAI`` (or compatible) client. Defaults to
-        :func:`build_azure_client`.
-    deployment : str, optional
-        The Azure deployment name. Defaults to ``$AZURE_OPENAI_DEPLOYMENT``.
-    count_tokens : callable, optional
-        The truncation counter. Must be the one Task 13 uses; the pipeline
-        passes none, so the default is the whitespace counter.
-    reasoning_effort : str or None
-        Sent to the API. "minimal" keeps reasoning inside the 200-token cap.
-    send_sampling_params : bool
-        Send the pinned temperature/top_p. gpt-5 models reject them.
-    response_format : "json_schema" or "json_object"
-        Strict structured outputs (default, per ``teacher.output_format``) or
-        plain JSON mode.
-    max_transport_retries : int
-        Retries of one request on 429 / 5xx / timeouts before giving up.
-    per_article_attempts : int
-        Logical attempts per article inside ``teacher_batch_client``.
-    max_workers : int
-        Concurrent requests inside ``teacher_batch_client``.
-    label_cache_path : path, optional
-        JSONL file of purchased labels, reloaded on construction.
-    call_log_path : path, optional
-        JSONL audit log of every request: raw reply, finish reason, token
-        usage, served model version and timestamp.
+        One instance holds the client, the frozen Task 12 prompt and the article
+        corpus, and exposes ``teacher_client`` (Task 13), ``teacher_call``
+        (Tasks 16 and 17) and ``teacher_batch_client`` (Task 18). Every argument
+        is keyword-only.
+
+        Parameters
+        ----------
+        prompt_template : Mapping[str, Any]
+            The return value of ``build_teacher_prompt_template_task_12``. Task
+            12's builders are pure functions of the configuration, so this equals
+            what stage 12 produces, including the ``prompt_version`` digest.
+        response_schema : Mapping[str, Any]
+            The return value of ``build_teacher_response_schema_task_12``.
+        decoding_config : Mapping[str, Any]
+            The return value of ``build_teacher_decoding_config_task_12``.
+        articles : Optional[ArticleSource], optional
+            The corpus the ID-only services resolve text from: the cleansed
+            ``retained_articles_c`` that Task 13 labels, as a DataFrame, a
+            Parquet or pickle path, or a zero-argument callable. A path or
+            callable is read lazily on the first ID-only call, so it can point at
+            ``<output_dir>/stage_outputs/retained_articles_c.parquet``, which
+            stage 3 writes before any teacher stage runs. Defaults to ``None``,
+            which leaves only ``teacher_client`` usable.
+        client : Any, optional
+            An ``openai.AzureOpenAI`` or compatible client. Defaults to ``None``,
+            which builds one with :func:`build_azure_client`.
+        deployment : Optional[str], optional
+            The Azure deployment name. Defaults to ``None``, which reads
+            ``$AZURE_OPENAI_DEPLOYMENT``.
+        study_config : Optional[Mapping[str, Any]], optional
+            The study configuration naming the environment variables. Defaults
+            to ``None``.
+        count_tokens : Optional[Callable[[str], int]], optional
+            The truncation counter. It must be the one Task 13 uses; the pipeline
+            passes none, so defaults to ``None``, the whitespace counter.
+        reasoning_effort : Optional[str], optional
+            Sent to the API; ``None`` omits it. Defaults to ``"minimal"``, which
+            keeps hidden reasoning inside the pinned 200-token cap.
+        send_sampling_params : bool, optional
+            Whether to send the pinned temperature and top_p. Defaults to
+            ``False`` because gpt-5 models reject them.
+        response_format : str, optional
+            ``"json_schema"`` for strict structured outputs, per
+            ``teacher.output_format``, or ``"json_object"`` for plain JSON mode.
+            Defaults to ``"json_schema"``.
+        max_transport_retries : int, optional
+            Retries of one request on a 429, a 5xx or a timeout before giving up.
+            Defaults to 6.
+        backoff_base_seconds : float, optional
+            The first exponential-backoff delay. Defaults to 1.0.
+        backoff_cap_seconds : float, optional
+            The longest backoff delay, ``Retry-After`` included. Defaults to 60.0.
+        per_article_attempts : int, optional
+            Logical attempts per article inside ``teacher_batch_client``.
+            Defaults to 3.
+        max_workers : int, optional
+            Concurrent requests inside ``teacher_batch_client``. Defaults to 8.
+        label_cache_path : Optional[Union[str, os.PathLike]], optional
+            A JSONL file of purchased labels, reloaded on construction so a rerun
+            never re-buys a label. Defaults to ``None``, an in-memory cache only.
+        call_log_path : Optional[Union[str, os.PathLike]], optional
+            A JSONL audit log of every request: raw reply, finish reason, token
+            usage, served model version and timestamp. Defaults to ``None``.
+        sleep : Callable[[float], None], optional
+            The backoff sleep, injectable for tests. Defaults to ``time.sleep``.
+
+        Attributes
+        ----------
+        system_prompt : str
+            Task 12's frozen template, sent as the system message.
+        prompt_version : str
+            The template's SHA-256 digest.
+        taxonomy : Tuple[str, ...]
+            The seventeen admissible tag names.
+        model_name : str
+            The teacher model the prompt was frozen against.
+        deployment : str
+            The Azure deployment every request is sent to.
+        stats : Dict[str, Any]
+            The running call ledger; read it through :meth:`audit`.
+
+        Raises
+        ------
+        TeacherConfigurationError
+            If the template's digest differs from its ``prompt_version``, the
+            attributes or taxonomy differ from the contract, the response format
+            is unknown, the schema lacks a contract field, or a required
+            environment variable is unset.
+
+        Warns
+        -----
+        RuntimeWarning
+            When the pinned temperature and top_p are not sent.
     """
 
     def __init__(
@@ -496,12 +728,33 @@ class AzureTeacher:
     # ------------------------------------------------------------------
 
     def teacher_client(self, request: Mapping[str, Any]) -> str:
-        """Task 13's ``teacher_client(request) -> str``.
+        """
+        Answer one Task 13 request (service ``teacher_client``).
 
-        Sends the request Task 13 built (its system prompt and its already
-        truncated user prompt) and returns the reply text, which Task 13
-        parses, validates and retries itself. Returns "" when the content
-        filter blocks the article, so Task 13 quarantines it.
+                Sends the request Task 13 built, its system prompt and its already
+                truncated user prompt, and returns the reply text, which Task 13
+                parses, validates and retries itself. The request's prompt version,
+                model, system prompt and output cap must match the frozen ones.
+
+                Parameters
+                ----------
+                request : Mapping[str, Any]
+                    The request built by Task 13's ``_teacher_request``.
+
+                Returns
+                -------
+                str
+                    The reply text, or ``""`` when the content filter blocks the
+                    article, so Task 13 quarantines it.
+
+                Raises
+                ------
+                TypeError
+                    If ``request`` is not a mapping.
+                TeacherConfigurationError
+                    If the request drifts from the frozen prompt, model or cap.
+                ConnectionError, TimeoutError, RuntimeError
+                    If a transport failure persists, so Task 13 retries the request.
         """
         if not isinstance(request, Mapping):
             raise TypeError("request must be a mapping.")
@@ -520,12 +773,36 @@ class AzureTeacher:
         return content
 
     def teacher_call(self, article_id: str, prompt_version: str) -> Optional[Dict[str, Any]]:
-        """Tasks 16 and 17's ``teacher_call(article_id, prompt_version) -> Mapping | None``.
+        """
+        Buy one label by article identifier (service ``teacher_call``).
 
-        Returns the seven contract fields (``secondary_tag`` None when there is
-        no second event) plus the API's ``usage`` mapping, which Task 16 reads
-        for its prefix-cache ledger. Returns None for an unusable reply, which
-        the notebook counts as a consumed attempt.
+                Serves Tasks 16 and 17. The article's text is resolved from the
+                corpus and truncated by Task 13's rule, so the request equals the
+                one Task 13 would send. A label already bought under this prompt
+                version is returned without a request.
+
+                Parameters
+                ----------
+                article_id : str
+                    The article's identifier, the study's idempotency key.
+                prompt_version : str
+                    The frozen prompt's version, which must equal this teacher's.
+
+                Returns
+                -------
+                Optional[Dict[str, Any]]
+                    The seven contract fields, with ``secondary_tag`` ``None`` when
+                    there is no second event, plus the API's ``usage`` mapping on a
+                    fresh purchase, which Task 16 reads for its prefix-cache ledger;
+                    or ``None`` for an unusable reply or an unknown identifier, which
+                    the notebook counts as a consumed attempt.
+
+                Raises
+                ------
+                TeacherConfigurationError
+                    If ``prompt_version`` differs from the frozen version.
+                ConnectionError, TimeoutError, RuntimeError
+                    If a transport failure persists, so the caller retries.
         """
         self._check_provenance(prompt_version, None, None)
         key = (self.prompt_version, str(article_id))
@@ -538,14 +815,33 @@ class AzureTeacher:
         return self._buy_label(str(article_id))
 
     def teacher_batch_client(self, batch: pd.DataFrame) -> pd.DataFrame:
-        """Task 18's ``teacher_client(frame) -> frame``.
+        """
+        Label one routed batch (service ``teacher_batch_client``).
 
-        Receives a frame of ``article_id`` and returns one row per requested
-        identifier with ``primary_tag``, ``secondary_tag`` ("none" when absent,
-        as the stand-in does) and ``labeled_at_utc``. Articles are labelled
-        concurrently. If any article still fails after its attempts, a
-        RuntimeError is raised, so Task 18 retries the batch; labels already
-        bought in it are reused, not re-bought.
+                Serves Task 18's ``teacher_client`` binding. The articles are
+                labelled concurrently, each with up to ``per_article_attempts``
+                tries. If any article still fails, the whole batch raises, so Task
+                18 retries it; labels already bought in the batch are reused on the
+                retry, never re-bought.
+
+                Parameters
+                ----------
+                batch : pd.DataFrame
+                    The routed rows, carrying ``article_id``.
+
+                Returns
+                -------
+                pd.DataFrame
+                    One row per requested identifier with ``article_id``,
+                    ``primary_tag``, ``secondary_tag`` (the ``"none"`` literal when
+                    absent, as the stand-in returns) and ``labeled_at_utc``.
+
+                Raises
+                ------
+                TypeError
+                    If ``batch`` is not a DataFrame carrying ``article_id``.
+                RuntimeError
+                    If any article in the batch could not be labelled.
         """
         if not isinstance(batch, pd.DataFrame) or "article_id" not in batch.columns:
             raise TypeError("batch must be a DataFrame carrying article_id.")
@@ -574,7 +870,15 @@ class AzureTeacher:
         return pd.DataFrame(rows, columns=["article_id", "primary_tag", "secondary_tag", "labeled_at_utc"])
 
     def services(self) -> Dict[str, Callable[..., Any]]:
-        """The three entries to merge into the pipeline bundle's ``services``."""
+        """
+        Return the three entries to merge into the pipeline bundle's services.
+
+                Returns
+                -------
+                Dict[str, Callable[..., Any]]
+                    ``teacher_client``, ``teacher_call`` and ``teacher_batch_client``,
+                    keyed by the service names Task 29's stage catalog binds.
+        """
         return {
             "teacher_client": self.teacher_client,
             "teacher_call": self.teacher_call,
@@ -582,7 +886,17 @@ class AzureTeacher:
         }
 
     def audit(self) -> Dict[str, Any]:
-        """A JSON-safe snapshot of the call ledger and the decoding actually used."""
+        """
+        Snapshot the call ledger and the decoding actually used.
+
+                Returns
+                -------
+                Dict[str, Any]
+                    A JSON-safe copy of :attr:`stats` (requests, retries, failures by
+                    class, finish reasons, invalid replies, labels bought and reused,
+                    token totals and served model versions), extended with the model,
+                    deployment, prompt version and decoding parameters sent.
+        """
         with self._lock:
             snapshot = json.loads(json.dumps(self.stats))
         snapshot.update(
@@ -605,7 +919,23 @@ class AzureTeacher:
     def _check_provenance(
         self, prompt_version: Any, model: Any, system_prompt: Any
     ) -> None:
-        """Refuse a call made under a different prompt, model or system message."""
+        """
+        Refuse a call made under a different prompt, model or system message.
+
+                Parameters
+                ----------
+                prompt_version : Any
+                    The caller's prompt version; it must equal the frozen digest.
+                model : Any
+                    The caller's model name, or ``None`` to skip the check.
+                system_prompt : Any
+                    The caller's system prompt, or ``None`` to skip the check.
+
+                Raises
+                ------
+                TeacherConfigurationError
+                    If any supplied value differs from the frozen one.
+        """
         if prompt_version != self.prompt_version:
             raise TeacherConfigurationError(
                 f"prompt_version {prompt_version!r} differs from the frozen "
@@ -621,7 +951,24 @@ class AzureTeacher:
             )
 
     def _resolve_texts(self) -> Dict[str, Tuple[str, str]]:
-        """Index the corpus once, by article_id, using Task 13's text columns."""
+        """
+        Index the corpus once by article identifier, using Task 13's text columns.
+
+                A declared ``article_text`` column fills the title slot alone, as in
+                Task 13; otherwise ``title`` and ``body`` are read. Missing values
+                become empty strings.
+
+                Returns
+                -------
+                Dict[str, Tuple[str, str]]
+                    ``article_id -> (title, body)``.
+
+                Raises
+                ------
+                TeacherConfigurationError
+                    If no corpus was supplied, or it lacks ``article_id`` or both
+                    text layouts.
+        """
         with self._lock:
             if self._texts is not None:
                 return self._texts
@@ -642,6 +989,19 @@ class AzureTeacher:
                 raise TeacherConfigurationError("the article corpus must carry article_id.")
 
             def clean(value: Any) -> str:
+                """
+                Render one text cell as a string, a missing value as empty.
+
+                        Parameters
+                        ----------
+                        value : Any
+                            The cell's value.
+
+                        Returns
+                        -------
+                        str
+                            The text, or ``""`` for ``None`` or a missing value.
+                """
                 return "" if value is None or (not isinstance(value, str) and pd.isna(value)) else str(value)
 
             texts: Dict[str, Tuple[str, str]] = {}
@@ -660,7 +1020,20 @@ class AzureTeacher:
             return texts
 
     def _user_prompt_for(self, article_id: str) -> Optional[str]:
-        """Compose the user message Task 13 would send for this article."""
+        """
+        Compose the user message Task 13 would send for one article.
+
+                Parameters
+                ----------
+                article_id : str
+                    The article's identifier.
+
+                Returns
+                -------
+                Optional[str]
+                    The truncated article suffix, or ``None`` when the corpus does not
+                    hold the identifier.
+        """
         texts = self._resolve_texts()
         if article_id not in texts:
             with self._lock:
@@ -679,7 +1052,19 @@ class AzureTeacher:
         return text
 
     def _label_with_attempts(self, article_id: str) -> Optional[Dict[str, Any]]:
-        """Buy (or reuse) one label with up to per_article_attempts tries."""
+        """
+        Buy or reuse one label with up to ``per_article_attempts`` tries.
+
+                Parameters
+                ----------
+                article_id : str
+                    The article's identifier.
+
+                Returns
+                -------
+                Optional[Dict[str, Any]]
+                    The label, or ``None`` when every attempt failed.
+        """
         for _ in range(self.per_article_attempts):
             try:
                 label = self.teacher_call(article_id, self.prompt_version)
@@ -690,7 +1075,25 @@ class AzureTeacher:
         return None
 
     def _buy_label(self, article_id: str) -> Optional[Dict[str, Any]]:
-        """Send one article to the teacher, validate the reply and cache the label."""
+        """
+        Send one article to the teacher, validate the reply and cache the label.
+
+                The label is cached in memory and, when configured, appended to the
+                label cache file with its timestamp and the served model version.
+                An unusable reply is counted in ``stats["invalid_replies"]`` by
+                reason.
+
+                Parameters
+                ----------
+                article_id : str
+                    The article's identifier.
+
+                Returns
+                -------
+                Optional[Dict[str, Any]]
+                    The seven contract fields plus ``usage`` when reported, or
+                    ``None`` for an unknown identifier or an unusable reply.
+        """
         user_prompt = self._user_prompt_for(article_id)
         if user_prompt is None:
             return None
@@ -722,11 +1125,40 @@ class AzureTeacher:
         return result
 
     def _complete(self, user_prompt: str, article_id: str) -> Tuple[str, Dict[str, Any]]:
-        """One logical request with transport retries; returns (content, meta).
+        """
+        Send one logical request, retrying transport failures with backoff.
 
-        Persistent transport failure is raised as a built-in exception class
-        the notebook's retry loops catch. A prompt blocked by Azure's content
-        filter returns "" with meta["content_filtered"] set.
+                A 408, 409, 429 or 5xx status, a timeout or a dropped connection is
+                retried up to ``max_transport_retries`` times. Any other status
+                propagates unchanged, because a bad key, an unknown deployment or a
+                malformed request is a configuration bug that must halt the run. A
+                prompt blocked by Azure's content filter is not an error: it returns
+                an empty reply.
+
+                Parameters
+                ----------
+                user_prompt : str
+                    The user message: the truncated article suffix.
+                article_id : str
+                    The article's identifier, recorded in the call log.
+
+                Returns
+                -------
+                Tuple[str, Dict[str, Any]]
+                    The reply text and its metadata: finish reason, served model,
+                    system fingerprint, token usage, the content-filter flag and the
+                    UTC timestamp.
+
+                Raises
+                ------
+                TimeoutError
+                    If the last failure was a timeout.
+                ConnectionError
+                    If the last failure was a dropped connection.
+                RuntimeError
+                    If the last failure was a retryable status.
+                openai.APIStatusError
+                    For a non-retryable status, such as 401, 403 or 404.
         """
         kwargs: Dict[str, Any] = {
             "model": self.deployment,
@@ -786,7 +1218,27 @@ class AzureTeacher:
         raise RuntimeError(message) from last_error
 
     def _read_response(self, response: Any, article_id: str) -> Tuple[str, Dict[str, Any]]:
-        """Extract the reply text and the ledger metadata from one completion."""
+        """
+        Extract the reply text and the ledger metadata from one completion.
+
+                Parameters
+                ----------
+                response : Any
+                    The SDK's chat completion.
+                article_id : str
+                    The article's identifier, recorded in the call log.
+
+                Returns
+                -------
+                Tuple[str, Dict[str, Any]]
+                    The reply text (``""`` when absent) and its metadata.
+
+                Warns
+                -----
+                RuntimeWarning
+                    When the output cap was spent before any reply text, which means
+                    hidden reasoning consumed the budget.
+        """
         choice = response.choices[0]
         message = choice.message
         content = message.content or ""
@@ -831,7 +1283,25 @@ class AzureTeacher:
         return content, meta
 
     def _backoff_seconds(self, retry: int, error: BaseException) -> float:
-        """Honour Retry-After when the service sends it, else capped exponential backoff with jitter."""
+        """
+        Compute the delay before the next transport retry.
+
+                ``Retry-After`` (milliseconds or seconds) is honoured when the service
+                sends it; otherwise the delay is capped exponential backoff with
+                jitter.
+
+                Parameters
+                ----------
+                retry : int
+                    The zero-based retry number.
+                error : BaseException
+                    The failure that forced the retry.
+
+                Returns
+                -------
+                float
+                    The delay in seconds, at most ``backoff_cap_seconds``.
+        """
         response = getattr(error, "response", None)
         headers = getattr(response, "headers", None) or {}
         for header, scale in (("retry-after-ms", 0.001), ("retry-after", 1.0)):
@@ -845,7 +1315,20 @@ class AzureTeacher:
         return min(self.backoff_cap_seconds, delay) * (0.5 + random.random() / 2)
 
     def _log_call(self, article_id: str, content: Optional[str], meta: Mapping[str, Any], **extra: Any) -> None:
-        """Append one request to the audit log, when one is configured."""
+        """
+        Append one request to the audit log, when one is configured.
+
+                Parameters
+                ----------
+                article_id : str
+                    The article's identifier.
+                content : Optional[str]
+                    The raw reply text, or ``None`` when no reply arrived.
+                meta : Mapping[str, Any]
+                    The reply's metadata.
+                **extra : Any
+                    Further fields to record, such as the error or the refusal.
+        """
         if self._call_log_path is None:
             return
         entry = {
@@ -861,13 +1344,27 @@ class AzureTeacher:
 
     @staticmethod
     def _append_jsonl(path: Path, record: Mapping[str, Any]) -> None:
-        """Append one JSON line (caller holds the lock)."""
+        """
+        Append one JSON line to a file; the caller holds the lock.
+
+                Parameters
+                ----------
+                path : Path
+                    The JSONL file, created with its parents when absent.
+                record : Mapping[str, Any]
+                    The record to write.
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
 
     def _load_label_cache(self) -> None:
-        """Reload labels bought by an earlier run under the same prompt version."""
+        """
+        Reload the labels an earlier run bought under the same prompt version.
+
+                Records under another prompt version, and records that fail the
+                label contract, are skipped rather than trusted.
+        """
         assert self._label_cache_path is not None
         with self._label_cache_path.open(encoding="utf-8") as handle:
             for line in handle:
@@ -893,12 +1390,37 @@ class AzureTeacher:
 
 
 def _now_utc() -> str:
-    """The current UTC instant in Task 18's isoformat."""
+    """
+    Return the current UTC instant in Task 18's timestamp format.
+
+        Returns
+        -------
+        str
+            ``pd.Timestamp.now(tz="UTC").isoformat()``.
+    """
     return pd.Timestamp.now(tz="UTC").isoformat()
 
 
 def _usage_dict(usage: Any) -> Optional[Dict[str, Any]]:
-    """Render the SDK's usage object as a plain JSON-safe mapping."""
+    """
+    Render the SDK's usage object as a plain JSON-safe mapping.
+
+        Parameters
+        ----------
+        usage : Any
+            The completion's ``usage`` attribute: a pydantic model, a mapping or
+            ``None``.
+
+        Returns
+        -------
+        Optional[Dict[str, Any]]
+            The token counts, nested in OpenAI's shape, or ``None`` when absent.
+
+        Examples
+        --------
+        >>> _usage_dict({"prompt_tokens": 900, "prompt_tokens_details": {"cached_tokens": 0}})
+        {'prompt_tokens': 900, 'prompt_tokens_details': {'cached_tokens': 0}}
+    """
     if usage is None:
         return None
     if hasattr(usage, "model_dump"):
@@ -909,7 +1431,20 @@ def _usage_dict(usage: Any) -> Optional[Dict[str, Any]]:
 
 
 def _is_content_filter(error: BaseException) -> bool:
-    """Whether an Azure 400 is a prompt blocked by the content filter."""
+    """
+    Decide whether an Azure HTTP 400 is a prompt blocked by the content filter.
+
+        Parameters
+        ----------
+        error : BaseException
+            The SDK's ``BadRequestError``.
+
+        Returns
+        -------
+        bool
+            ``True`` when the error, or its body, carries the ``content_filter``
+            code.
+    """
     if getattr(error, "code", None) == "content_filter":
         return True
     body = getattr(error, "body", None)
@@ -923,7 +1458,20 @@ def _is_content_filter(error: BaseException) -> bool:
 
 
 def make_azure_teacher_services(**kwargs: Any) -> Tuple[AzureTeacher, Dict[str, Callable[..., Any]]]:
-    """Build an :class:`AzureTeacher` and return it with its three services."""
+    """
+    Build an :class:`AzureTeacher` and return it with its three services.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            The keyword arguments of :class:`AzureTeacher`.
+
+        Returns
+        -------
+        Tuple[AzureTeacher, Dict[str, Callable[..., Any]]]
+            The teacher, for its :meth:`AzureTeacher.audit`, and the services to
+            merge into the pipeline bundle.
+    """
     teacher = AzureTeacher(**kwargs)
     return teacher, teacher.services()
 
