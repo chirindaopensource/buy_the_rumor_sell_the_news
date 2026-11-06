@@ -104,3 +104,9 @@ ipykernel==6.31.0
 # the verification environment, so no version is pinned or verified here;
 # uncomment to install the current release.
 # sentence-transformers
+
+# import openai: needed only by azure_teacher_clients.py, the live Azure
+# replacement for the usage example's three offline teacher services. The
+# notebook never imports it. Verified with openai 3.46.0 (mocked transport,
+# no live Azure call); uncomment to install.
+# openai==3.46.0

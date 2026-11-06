@@ -2528,3 +2528,51 @@ hypotheses: 10 | control: none
 4. **Interface inputs:** `assemble_attribute_events_task_34` joins Task 22's events to Task 25's adjusted returns. The tolerances come from Task 34's step text.
 5. **Interface:** `run_task_34` aggregates the ten attribute slices over signed events, bootstraps each slice by trading date (5,000 draws, DEF21 seed), and compares the slices with the Section 5.3 attribute targets. It halts only on a `quantified = 0` sign flip. It writes three artefacts and returns the two tables, the comparison and their paths.
 6. **Outcome:** the unquantified reversal (−0.122%, $p = 0.003$) and the rumor pre-window ordering reproduce. The scheduled slices deviate and are reported as findings, with ten unadjusted hypotheses disclosed.
+
+### **Appendix: Calling the Live Azure Teacher**
+
+The example above uses offline stand-ins. To label with the paper's real teacher, gpt-5-mini on Azure OpenAI, use `azure_teacher_clients.py` (next to the notebook) in place of the three teacher services of Step 3.2. Nothing else in the bundle changes.
+
+**This spends money.** At the paper's \$0.0002 per call, the full study is about \$156. Run it on a small corpus first and read `teacher.audit()`.
+
+```python
+# =============================================================================
+# Appendix: replacing the three teacher stand-ins with live Azure services
+# =============================================================================
+# Needs: python -m pip install openai, and these environment variables
+# (names from llm_api.teacher in config.yaml):
+#   AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT,
+#   AZURE_OPENAI_API_VERSION, AZURE_OPENAI_DEPLOYMENT
+from azure_teacher_clients import AzureTeacher
+
+# Task 12's builders are pure functions of the configuration, so these equal
+# what stage 12 produces, including the prompt_version digest.
+teacher = AzureTeacher(
+    prompt_template=build_teacher_prompt_template_task_12(pipeline_config),
+    response_schema=build_teacher_response_schema_task_12(pipeline_config),
+    decoding_config=build_teacher_decoding_config_task_12(pipeline_config),
+    # Tasks 16-18 pass only article ids. Stage 3 writes the cleansed corpus
+    # here before any teacher stage runs; it is read on the first id-only call.
+    articles=RUN_DIR / "stage_outputs" / "retained_articles_c.parquet",
+    # Labels bought once are never bought again, even across reruns.
+    label_cache_path=RUN_DIR / "teacher" / "labels.jsonl",
+    # Raw replies, finish reasons, token usage and served model versions.
+    call_log_path=RUN_DIR / "teacher" / "calls.jsonl",
+    max_workers=8,   # concurrent requests inside Task 18's batches
+)
+# Replace teacher_client, teacher_call and teacher_batch_client.
+bundle["services"] = {**bundle["services"], **teacher.services()}
+pipeline_result = run_full_pipeline_task_29(
+    bundle, pipeline_config, None, output_dir=RUN_DIR)
+# The call ledger: requests, retries, invalid replies, tokens, served models.
+print(teacher.audit())
+```
+
+What the wrappers keep from the notebook, and where they cannot:
+
+- **Same prompt, same text.** The system message is Task 12's frozen template, and each article is truncated by Task 13's rule. Tasks 16–18 therefore send exactly what Task 13 would. A template whose SHA-256 differs from its `prompt_version`, or a call made under another version, raises `TeacherConfigurationError` and halts the stage.
+- **Retries the notebook can see.** Rate limits (honouring `Retry-After`), 5xx errors and timeouts are retried inside the wrapper. If they persist, they are raised as `RuntimeError`, `TimeoutError` or `ConnectionError`, the classes the notebook's retry loops catch. The `openai` SDK's own errors are not those classes, so without this one HTTP 429 would abort a stage. Bad keys, unknown deployments and malformed requests still halt the run.
+- **Contract checks before return.** Off-taxonomy tags, a missing field, non-boolean attributes and `secondary_tag == primary_tag` are rejected as unusable replies, because Task 17 halts on an off-taxonomy tag. Azure's strict structured outputs cannot express Task 12's `allOf` rule, so that rule is checked locally.
+- **Decoding, where gpt-5-mini differs from DEF14.** It is a reasoning model, and its API accepts only the default temperature and top_p. The pinned 0.0 / 1.0 are therefore not sent, and a `RuntimeWarning` says so. The 200-token cap goes out as `max_completion_tokens`, which also covers hidden reasoning tokens, so `reasoning_effort="minimal"` is the default. If the cap is spent before any output, the reply is empty (`finish_reason="length"`) and counts as unusable.
+- **Prompt caching.** The frozen template is about 3,200 characters, roughly 800 tokens, which is below the 1,024 tokens Azure needs before it caches a prompt. Task 16's ledger will likely show no cache hits, even though `teacher.prefix_caching_required` is true.
+- **Model version.** Every reply records the model version Azure served (`served_models` in `teacher.audit()` and in the call log). It can fill `teacher_model_version_string`, which the notebook leaves unresolved.
