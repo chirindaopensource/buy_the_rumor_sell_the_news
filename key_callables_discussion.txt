@@ -1,0 +1,611 @@
+## Key callables, Tasks 1 to 40
+
+This discussion covers the 40 final task orchestrators of `buy_the_rumor_sell_the_news_draft.ipynb`, in notebook task order. Thirty-six are named `run_task_1` to `run_task_40`; the orchestrators of Tasks 29, 32, 33 and 39 are `run_full_pipeline_task_29`, `run_single_tag_task_32`, `run_teacher_only_task_33` and `run_portfolio_book_verification_task_39`.
+
+Python implementation author: **CS Chirinda**.
+
+Behaviour is established from each orchestrator's signature and documented contract, the docstrings and code of the stage callables it composes, and the notebook's declared constants; the paper, `latex_context.txt`, is the methodological standard. Internal helpers are accounted for inside their parent task rather than counted as additional callables.
+
+Notation: stock $i$, session $t$, event $e$ on stock $i$ at session $t_0$, simple return $r_{i,t}$, SPY return $r_{m,t}$, rolling beta $\beta_{i,t}$, abnormal return $AR_{i,t}$, sentiment sign $s_e\in\lbrace-1,+1\rbrace$, size bucket $k\in\lbrace\mathrm{small},\mathrm{mid},\mathrm{large}\rbrace$, window $w\in\lbrace[-5,0],[0,0],[+1,+5],[+6,+20]\rbrace$, neutral baseline $b_{k,w}$, event tag $\tau$. The paper numbers no equations, so the four that recur are labelled here: (A) the abnormal return $AR_{i,t}=r_{i,t}-\beta_{i,t}r_{m,t}$; (B) the window cumulation $CAR_{e,w}=\sum_{j\in w}AR_{i,t_0+j}$; (C) the baseline $b_{k,w}$, the mean $CAR$ of neutral events in bucket $k$ over window $w$; (D) the adjusted estimator $s_e(CAR_{e,w}-b_{k,w})$.
+
+Data boundary: the NewsWitch corpus behind every published count, drift and p-value is proprietary and is not held by this project. Published figures below are comparison targets that the code checks, not results this document reports. No orchestrator returns a published figure as a computed value; the arithmetic is verified on planted fixtures with known answers. Task numbers identify notebook cells: `run_full_pipeline_task_29` executes Tasks 1–28 as its 28 stages, and Tasks 30–40 consume their outputs.
+
+### Task 1 — `run_task_1`
+
+- **Inputs**: `frames` (the seven tables) or keyword `source_paths` (seven Parquet paths), exactly one of the two; `config` with `raw_input_schemas` and `verification_targets`; `output_dir`.
+- **Process**: judges the schema, then key uniqueness, then the five referential-integrity assertions plus the one-to-one link between the label store and the retained corpus, then the declared verification targets. It halts on the first failing class.
+- **Outputs**: `schema_audit`, `hashes`, `bundle` (a frozen `IngestBundle` carrying measured provenance), `audit_path`.
+- **Transformation**: each table is read with PyArrow memory mapping or measured as supplied, fingerprinted once by SHA-256 of its primary key, and reduced to an audit record; the caller's frames are never mutated.
+- **Research role**: guards the corpus counts of Section 3: "over the sample this amounts to more than 70 million raw articles. The 4.57 million retained here are the important ones", on "2,591 tradeable symbols".
+- **Equations**: the audited targets:
+
+$$
+N_{\mathrm{raw}}\gt 7\times10^{7},\qquad N_{\mathrm{retained}}=4.57\times10^{6},\qquad N_{\mathrm{symbols}}=2{,}591.
+$$
+
+- **Implementation distinction**: `schema_audit.json` is written before `IngestHalt` is raised, so the failing check survives the process that found it.
+
+### Task 2 — `run_task_2`
+
+- **Inputs**: `frames` (the seven ingested tables), `config`, `output_dir`.
+- **Process**: profiles every column, checks temporal and dimensional consistency, then applies the gates. The merged `quality_report.json` replaces the profile-only report of step 1.
+- **Outputs**: `quality_report`, `heatmap`, `deviation_log` (paths), `report`, `gate_decisions`, `halt`, `proceed_to_task_3`.
+- **Transformation**: column profiles (completeness, identifier uniqueness, enumerated-range validity, tail quantiles) and consistency checks (timestamps in the sample window, price dates on the calendar, beta-window density, tercile feasibility, top-1 source-domain share) become one gate decision.
+- **Research role**: protects the inputs of Section 4.3, where $\beta_t$ is "a rolling 252-day OLS beta ... (minimum 126 observations, missing betas set to 1)" and buckets are formed "each year ... by dollar volume".
+- **Equations**: the halting completeness gate on each key field $j$:
+
+$$
+c_j=1-\frac{n^{\mathrm{missing}}_j}{n}\ \ge\ 0.99 .
+$$
+
+- **Implementation distinction**: 0.99 is a declared default, not a paper figure, and is logged as a deviation. Only completeness, identifier uniqueness, range validity and Task 1's integrity assertions can halt; Task 29 stops the pipeline on `halt = True`.
+
+### Task 3 — `run_task_3`
+
+- **Inputs**: `study_config`, `raw_crawl_c`, `retained_articles_c`, `symbol_master`, `raw_prices_c`, `market_proxy_prices_c`, `output_dir`, `tokenize_fn` (the story-embedder tokenizer); optional `backfill_manifest`, `exchange_calendar`.
+- **Process**: cleanse (five drop-or-fix rules), normalise, derive; each `_c` frame is written to Parquet and the derived article frame is frozen as a snapshot with its SHA-256.
+- **Outputs**: `frames`, `calendar_cleansing_record`, `snapshot_path`, `snapshot_hash` and five log paths (cleansing, derivation, dropped identifiers, deviations, normalisation).
+- **Transformation**: a disallowed HTTP status is dropped, robots non-compliance quarantined, a paywalled truncated body flagged, a non-English article removed, and a missing adjusted close retained as null and flagged. Domains are resolved on the public suffix list, tickers uppercased without venue, timestamps parsed in their declared zone to UTC.
+- **Research role**: Section 3 states that "3.4% of articles reference symbols without price history ... and 9.7% of events are skipped for missing price windows", so a missing close is flagged, never imputed.
+- **Equations**: the true dollar volume that conditions the size terciles:
+
+$$
+DV_{i,d}=P^{\mathrm{unadj}}_{i,d}\,V_{i,d}.
+$$
+
+- **Implementation distinction**: the adjusted-close dollar volume is carried only as a sensitivity companion. The backfill flag uses the vendor manifest or a declared default, recorded as such.
+
+### Task 4 — `run_task_4`
+
+- **Inputs**: `raw_crawl_c`, `exchange_calendar`, `output_dir`; keyword `retained_articles`.
+- **Process**: URL deduplication, near-duplicate content collapsing, then trading-day assignment. Dropped records from both stages form one ledger with a stage flag.
+- **Outputs**: `articles_deduped`, `articles_deduped_dropped`, `articles_with_trading_day`, `half_day_deviations`, `paths`, `article_join`.
+- **Transformation**: canonical URLs keep the earliest first-publication instant (ties: ascending crawl id); a 64-bit SimHash with a Hamming threshold collapses near-duplicates, with emitted clusters capped by a maximum pairwise distance against single-link chaining; survivors receive a session.
+- **Research role**: implements Section 4.2: "articles published after 16:00 New York time roll to the next trading day".
+- **Equations**: with $d$ the New York local date and $h$ the wall-clock time of article $a$, and $\mathcal{S}$ the session set:
+
+$$
+\mathrm{day}(a)=\begin{cases}d,& d\in\mathcal{S}\ \wedge\ h\le 16{:}00\\ \min\lbrace s\in\mathcal{S}: s\gt d\rbrace,&\mathrm{otherwise,}\end{cases}\qquad H(x,y)=\mathrm{popcount}(x\oplus y).
+$$
+
+- **Implementation distinction**: a sensitivity path repeats the rule with each session's actual close; the rows where the two disagree are the persisted half-day deviations. With `retained_articles`, survivors that are not retained articles are counted, not assigned.
+
+### Task 5 — `run_task_5`
+
+- **Inputs**: `symbol_master_c`, `raw_prices_c`, `retained_articles_c`, `sample_window`, `output_dir`, `mention_window_days` (default 30).
+- **Process**: builds the ticker lifecycle, resolves every article to a symbol, then accounts for coverage attrition; step 3 receives step 1's indexed master, so coverage flags are computed once.
+- **Outputs**: `ticker_lifecycle`, `symbol_master_indexed`, `article_resolution`, `unresolved_rate`, `attrition_ledger`, `n_symbols_master`, `n_symbols_with_price_history`, `paths`.
+- **Transformation**: lifecycle segments per (symbol, ticker) handle ticker reuse; an article resolves by printed ticker and date (current listing, uncontested former ticker, reused ticker), by mention counts in a ±30-day window under concurrent sharing, then by exact company name, else unresolved.
+- **Research role**: measures the Section 3 cohort, "3.4% of articles reference symbols without price history (delistings skew small)".
+- **Equations**: price history requires an in-sample close above one cent, and the shortfall is partitioned exactly:
+
+$$
+N_{\mathrm{master}}-N_{\mathrm{history}}=N_{\mathrm{never\ priced}}+N_{\mathrm{delisted\ before\ sample}}+N_{\mathrm{no\ usable\ close}}.
+$$
+
+- **Implementation distinction**: published counts (about 3,000 stocks, 2,591 symbols) are never returned as literals; equivalent quantities are computed from the supplied data.
+
+### Task 6 — `run_task_6`
+
+- **Inputs**: `exchange_calendar_c`, `sample_window`, `output_dir`.
+- **Process**: builds the indexed calendar (canonical New York session check, zero-based rank, UTC offsets, open and close instants), then audits it.
+- **Outputs**: a `CalendarTask6` object carrying `calendar_indexed`, the `shift` and session-gap primitives, and the attached audit.
+- **Transformation**: declared dates become a strictly ranked session axis; a noncanonical date is flagged, not dropped.
+- **Research role**: Section 4.2 makes the trading day a session, and Section 4.3 windows are counted in sessions; every window endpoint, rumor gap and story age downstream routes through this axis.
+- **Equations**: the $O(1)$ shift on session ranks:
+
+$$
+\mathrm{shift}(t,j)=s_{\mathrm{rank}(t)+j},\qquad \mathrm{gap}(t_1,t_2)=\mathrm{rank}(t_2)-\mathrm{rank}(t_1).
+$$
+
+- **Implementation distinction**: the audit requires at least 21 sessions beyond each side of the sample window, no missing or duplicated session, and a UTC offset matching the timezone database on every row, so a constant offset across a daylight-saving change is reported.
+
+### Task 7 — `run_task_7`
+
+- **Inputs**: `prices`, `symbol_master`, `delisting_returns`, `events`, `output_dir`.
+- **Process**: computes session returns, flags adjustment-factor jumps for review, integrates delisting returns, validates the panel, counts event attrition.
+- **Outputs**: `prices_returns`, `attrition`, `deviation_log_path`, `split_review`, `split_review_path` (`split_review_task_7.csv`).
+- **Transformation**: closes become simple returns from the previous available session; a missing or zero endpoint yields a missing return, never zero or a forward fill.
+- **Research role**: supplies $r_t$ of Section 4.3 ("Let $r_t$ be the stock's daily return"), cumulated by simple summation, so the return is a ratio, not a logarithm.
+- **Equations**: the return, with the delisting return added on the master's last price date $T_i$:
+
+$$
+r_{i,t}=\frac{P_{i,t}}{P_{i,t^-}}-1,\qquad r_{i,T_i}\leftarrow r_{i,T_i}+r^{\mathrm{delist}}_i .
+$$
+
+- **Implementation distinction**: a move with $\lvert r\rvert\gt0.95$ is split-confirmed when the adjustment-factor ratio exceeds 1.5; otherwise its row and flag are kept but the return is set missing (ruling of 2026-11-06). Every factor jump above 1.5 enters the manual-review table.
+
+### Task 8 — `run_task_8`
+
+- **Inputs**: `market_proxy_prices_c`, `exchange_calendar`, `returns_panel`, `output_dir`; optional `size_buckets`, `market_proxy_symbol` (SPY), `window` (252), `min_obs` (126).
+- **Process**: builds the market return on the session grid, estimates rolling betas, audits them; writes exactly the market-return grid and the beta panel.
+- **Outputs**: `market_returns`, `alignment_report`, `betas`, `beta_audit`, `output_paths`.
+- **Transformation**: a missing proxy session yields a missing return on that session and the next, never a return spanning the gap; each symbol's paired returns become a beta per session.
+- **Research role**: implements Section 4.3: "$\beta_t$ a rolling 252-day OLS beta of the stock against the S\&P 500, as of day $t$ (minimum 126 observations, missing betas set to 1)".
+- **Equations**: over the last $n_t\le252$ paired observations $W_t$ ending at $t$ inclusive:
+
+$$
+\hat\beta_{i,t}=\begin{cases}\dfrac{\sum_{s\in W_t}(r_{i,s}-\bar r_i)(r_{m,s}-\bar r_m)}{\sum_{s\in W_t}(r_{m,s}-\bar r_m)^2},& n_t\ge126\\ 1,& n_t\lt126\ \mathrm{or\ market\ variance\ at\ the\ floor.}\end{cases}
+$$
+
+- **Implementation distinction**: the fallback is reproduced, not corrected; the audit reports its share, the count exactly at 126 observations and, with buckets, both by size bucket.
+
+### Task 9 — `run_task_9`
+
+- **Inputs**: `prices_returns`, `market_returns`, `betas`; keyword `output_dir`, `missing_threshold` (0.20), `identity_tolerance` ($10^{-9}$), `subsample_frac` (0.05), `random_state` (20261026).
+- **Process**: computes and persists the abnormal-return panel, diagnoses missing cells, and verifies the decomposition identity.
+- **Outputs**: `abnormal_returns`, `missingness`, `decomposition`, `summary_line`, `manifest`.
+- **Transformation**: betas are left-joined on (symbol, session) and the market return by date; any missing input yields a missing $AR$, and a return row with no beta row is labelled `beta_absent`.
+- **Research role**: implements equation (A), Section 4.3: "The abnormal return is $AR_t = r_t - \beta_t r_{m,t}$".
+- **Equations**: (A) and the verified identity:
+
+$$
+AR_{i,t}=r_{i,t}-\beta_{i,t}r_{m,t},\qquad \max_{i,t}\left\lvert r_{i,t}-\left(AR_{i,t}+\beta_{i,t}r_{m,t}\right)\right\rvert\le10^{-9}.
+$$
+
+- **Implementation distinction**: the identity is checked on a seeded 5% subsample first, then on the whole panel; the manifest is written before any violation raises. Missingness is separated by reason, so a calendar defect is distinguishable from thin history.
+
+### Task 10 — `run_task_10`
+
+- **Inputs**: `prices` (`symbol_id`, `date`, `close_unadj`, `volume_shares`), `config` (`size_buckets`, `ingestion.sample_window`), `output_dir`.
+- **Process**: resolves settings with provenance, computes daily and annual dollar volume and the partial-year fallback, assigns terciles, applies the observation floor and validates.
+- **Outputs**: `dollar_volume_daily`, `dollar_volume_annual`, `size_bucket_lookup`, `size_buckets`, `validation`, `deviation_log`, `first_year_convention`, `bucket_regimes`, `settings`.
+- **Transformation**: bucket year $y$ is ranked on year $y-1$ dollar volume, descending, ties by symbol; the top third is large, the next mid, the rest small. The first year is ranked on its own opening months.
+- **Research role**: implements Section 4.3: "stocks are split each year into three equal-sized groups (small, mid, large) by dollar volume", point-in-time, so no contemporaneous volume enters the conditioning set.
+- **Equations**: counting only days with both inputs present:
+
+$$
+DV_{i,y}=\sum_{d\in y}P^{\mathrm{unadj}}_{i,d}V_{i,d},\qquad k_{i,y}=\mathrm{tercile}\left(\mathrm{rank}\ DV_{i,y-1}\right).
+$$
+
+- **Implementation distinction**: a name with fewer than 20 effective days in $y-1$ inherits its $y-1$ bucket only when $y-2$ was sufficient (or $y-1$ is the first year); otherwise it is dropped with an attrition record. Each year's construction convention is returned, so it cannot be applied silently.
+
+### Task 11 — `run_task_11`
+
+- **Inputs**: `study_config`, `audit_sample` (hand-audited records with recorded responses), `output_dir`.
+- **Process**: builds the frozen gate template, pins the decoding configuration, validates the prompt on the audit sample.
+- **Outputs**: `prompt_version`, `status`, `gate_prompt_template`, `gate_decoding_config`, `prompt_validation_report`, `artifact_paths`.
+- **Transformation**: blocks in fixed order (role, company context, the four decisions, the five sentiment strings with audit codes, the output contract), with exactly three call-time placeholders, become a versioned template with a digest over template and configuration.
+- **Research role**: reconstructs the vendor gate of Section 3: an LLM "decides whether the article is genuinely related to the stock and important enough to keep, assigns a sentiment direction on five levels ..., and writes a summary". The prompt carries no date, price or directional cue.
+- **Equations**: the decoding pins and the inclusive compliance floor:
+
+$$
+T=0,\qquad p_{\mathrm{top}}=1,\qquad n^{\mathrm{out}}_{\max}=250,\qquad \frac{n_{\mathrm{schema\ valid}}}{n}\ge0.99 .
+$$
+
+- **Implementation distinction**: the sentiment string set is a pinned deviation because the paper leaves it unresolvable. A collapse of sentiment to Neutral halts. A failed audit still persists every artefact.
+
+### Task 12 — `run_task_12`
+
+- **Inputs**: `study_config`, `title`, `body`, `output_dir`; optional `count_tokens` (defaults to a declared whitespace approximation).
+- **Process**: builds the teacher template, the response schema and the decoding configuration, truncates the article suffix to the remaining budget, assembles the full prompt.
+- **Outputs**: `prompt_template`, `schema`, `decoding_config`, `prompt`, `suffix`, `artifacts`.
+- **Transformation**: role, taxonomy with mandatory disambiguation clauses, attribute definitions, four few-shot exemplars and the seven-field contract form a cached prefix; the article forms the varying suffix.
+- **Research role**: implements Section 4.1: "A frozen prompt presents 17 event-tag definitions, five binary attribute definitions ... and four example articles ... with a strict JSON schema", including the two junk categories, price commentary and promotional content.
+- **Equations**: the schema and the context budget:
+
+$$
+\mathrm{primary}\in\mathcal{T}_{17},\quad \mathrm{secondary}\in\mathcal{T}_{17}\cup\lbrace\mathrm{none}\rbrace,\quad \mathbf{a}\in\lbrace0,1\rbrace^5;\qquad T_{\mathrm{prefix}}+T_{\mathrm{suffix}}+T_{\mathrm{out}}\le T_{\mathrm{ctx}}.
+$$
+
+- **Implementation distinction**: the schema admits no other property. The look-ahead exclusions are stated in the prompt itself: the teacher classifies text and never forecasts.
+
+### Task 13 — `run_task_13`
+
+- **Inputs**: `retained_articles_c`, `config`, `teacher_client` (one attempt per call), `output_dir`; keyword `prompt_template`, `decoding_config` (Task 12's artefacts).
+- **Process**: draws the bootstrap sample, labels it with the frozen teacher, audits the label store, builds the run configuration.
+- **Outputs**: `sample_result`, `labeled_articles`, `validation`, `proceed_to_task_14`, `run_config`, `artifacts`.
+- **Transformation**: a seeded draw without replacement becomes a store keyed by `article_id` (idempotent), with label source, hard-label confidence, stratum, model, prompt version and a timestamp per label.
+- **Research role**: implements Section 4.1: "The teacher labeled 29,472 random articles" "at about \$0.0002 per article", and "Every article records its label source".
+- **Equations**: the charge per successful label (never per retry) and the three-sigma share check:
+
+$$
+C=0.0002\,n_{\mathrm{usable}},\qquad \lvert\hat p_\tau-p^{\mathrm{ref}}_\tau\rvert\le3\sqrt{\frac{p^{\mathrm{ref}}_\tau(1-p^{\mathrm{ref}}_\tau)}{n_{\mathrm{usable}}}}.
+$$
+
+- **Implementation distinction**: proceeding requires size within tolerance, the usable floor, a reconciled per-label charge and a valid source domain; Task 29 halts on `proceed_to_task_14 = False`. Without a human gold set, no agreement figure is produced.
+
+### Task 14 — `run_task_14`
+
+- **Inputs**: `output_dir`, `backbone_config` (checkpoint keys or `ckpt_*` aliases), `checkpoint_paths`; optional `last_known_sha256`, `deviation_log`, `training_labels`.
+- **Process**: validates the pinned backbone facts, inventories and counts parameters, hashes the checkpoint, enforces provenance, persists the audit, runs the pooling permutation test, computes class weights, persists the untrained checkpoint.
+- **Outputs**: `audit`, `n_params`, `audit_path`, `audit_sha256`, `checkpoint_path`, `checkpoint_sha256`, `class_weights`, `input_contract`, `provenance`, `pooling_permutation_check`, `canonical_facts_filled`.
+- **Transformation**: declared shapes become an audited seven-head architecture: six layers, 768 hidden units, twelve heads of width 64, feed-forward 3,072, 514 positions, 52,265 tokens.
+- **Research role**: implements Section 4.1: "a distilroberta-base student (82M parameters, seven heads: primary tag, secondary tag, five attributes)".
+- **Equations**: the masked mean pool, inverse-frequency weights ($N$ labels, $K$ classes) and the DEF20 objective with $\lambda_1=1.0$, $\lambda_2=0.5$:
+
+$$
+\mathbf{h}=\frac{\sum_j m_j\mathbf{H}_j}{\sum_j m_j},\qquad w_c=\frac{N}{K\,n_c},\qquad \mathcal{L}=\lambda_1\mathrm{CE}_w^{(17)}+\lambda_2\mathrm{CE}_w^{(18)}+\sum_{a=1}^{5}\mathrm{BCE}_a .
+$$
+
+- **Implementation distinction**: this task instantiates no torch model; the persisted checkpoint is the declared state, and real training happens in Task 15. A changed checkpoint hash halts unless the deviation log accepts it.
+
+### Task 15 — `run_task_15`
+
+- **Inputs**: `config` (`encode`, `decode`, `output_dir`, `model` or the label vectors); optional `bootstrap_labels`, `articles`, `tag_names`, `model` (a `torch.nn.Module`), `output_dir`.
+- **Process**: assembles inputs from Task 13's labels, builds each article input, splits an internal hold-out, computes class weights (report: all labels; objective: training split), trains, persists weights, checkpoint and report.
+- **Outputs**: the training report: per-epoch records, best epoch and metric, chance level, halt flags, both class-weight vectors, the split and its provenance, hyperparameters, precision plan, counters, checkpoint record.
+- **Transformation**: title, a space and the body truncated to 512 tokens (a 416-token head plus 96 tokens of numeral-bearing tail sentences) become gradient updates of the injected student.
+- **Research role**: implements the student training of Section 4.1 under the stated mechanics: AdamW, linear warmup and decay, clipping, mixed precision, early stopping on macro-F1, numeral-preserving truncation.
+- **Equations**: early stopping on held-out macro-F1, with a 6% linear warmup then linear decay to zero:
+
+$$
+\mathrm{F1}_{\mathrm{macro}}=\frac1K\sum_{c=1}^{K}\frac{2P_cR_c}{P_c+R_c},\qquad \eta_u=\eta_0\min\left(\frac{u}{0.06U},\ \frac{U-u}{0.94U}\right),\ \eta_0=2\times10^{-5}.
+$$
+
+- **Implementation distinction**: batch 32, weight decay 0.01, at most five epochs, patience two, gradient norm 1.0, bf16 with a logged fp32 fallback, logits clamped at $\lvert10\rvert$. The internal 10% hold-out is not the paper's 10,000-article set (Task 17). A non-finite loss or a collapse below chance halts after the report is written.
+
+### Task 16 — `run_task_16`
+
+- **Inputs**: `retained_articles_c`, `bootstrap_article_ids`, `student_model`, `teacher_call`, `tag_names`, `output_dir`, `labeled_articles_path`; keyword `prompt_version`, `n_draw` (600,000), `n_select` (100,000), `quota_per_tag` (500), `batch_size` (50,000), `seed` (42), `cost_usd` (0.0002), `max_attempts` (3).
+- **Process**: first-pass inference over a fresh pool, quota-first uncertainty selection, routing of the selection to the teacher.
+- **Outputs**: `pool_rows`, `sample_size`, `artifacts` (pool and delta paths), with the stage results.
+- **Transformation**: the pool excludes bootstrap identifiers; the 500 least-confident rows of every tag are taken first, then the remainder fills in ascending confidence to exactly 100,000; validated teacher labels are appended to the store.
+- **Research role**: implements Section 4.1: "trained on these labeled 600,000 fresh articles; the 100,000 lowest-confidence articles went back to the teacher (uncertainty sampling, with a quota for rare tags)".
+- **Equations**: the confidence and the usable band:
+
+$$
+\mathrm{conf}(x)=\max_{c}\ p_c(x),\qquad 99{,}000\le n_{\mathrm{usable}}\le100{,}000 .
+$$
+
+- **Implementation distinction**: a tag short of its quota records a deficit and takes nothing from other tags. Throughput is reported against the paper's 125–160 articles per second.
+
+### Task 17 — `run_task_17`
+
+- **Inputs**: `bootstrap_labels`, `active_learning_labels`, `v1_checkpoint`, `model`, `encode`, `pool_table`, `gold_table`, `output_dir`; optional `max_tokens` (512), `numeral_budget` (96), `sample_size` (10,000), `seed`, `heldout_evaluation`; keyword `articles`, `training_overrides`, `predict_fn`, `teacher_call`, `prompt_version`, `teacher_max_attempts`.
+- **Process**: merges the labels with provenance, warm-starts from v1 and writes v2, draws the disjoint dual-label sample, measures agreement against the teacher and the human gold sample, verifies the bands, writes the report.
+- **Outputs**: `merged_rows`, `n_dual`, `checkpoint`, `agreement`, `human_gold`, `label_provenance`, `human_anchor`, `dual_label_construction`, three artefact paths.
+- **Transformation**: two label frames become one 129,463-row training set and a retrained student; a held-out sample labelled by both becomes agreement statistics.
+- **Research role**: implements Section 4.1: "the student was retrained on the merged 129,463 labels (29,472 + 99,991)", agreeing "on 87.5% of primary tags overall and 94.0% at confidence $\ge 0.8$ (85% of articles); attribute agreement is 92--99%".
+- **Equations**: primary agreement and its high-confidence restriction, with bands $0.875\pm0.03$ and $0.94\pm0.02$:
+
+$$
+A=\frac1n\sum_{x}\mathbb{1}\left[\hat y^{S}(x)=\hat y^{T}(x)\right],\qquad A_{0.8}=\frac{\sum_x\mathbb{1}[\mathrm{conf}(x)\ge0.8]\,\mathbb{1}[\hat y^{S}=\hat y^{T}]}{\sum_x\mathbb{1}[\mathrm{conf}(x)\ge0.8]}.
+$$
+
+- **Implementation distinction**: agreement with the teacher is a pseudo-oracle, so the human gold sample is evaluated separately as the only absolute check. Per-tag precision and recall bound later false-discovery bands.
+
+### Task 18 — `run_task_18`
+
+- **Inputs**: `articles`, `cached_teacher`, `predict_fn`, `teacher_client`, `contract`, `out_root`; keyword `active_learning_labels`.
+- **Process**: batched student inference over every article, the routing merge, cardinality validation, then re-read and derivation audits.
+- **Outputs**: `n_student`, `n_final`, `student_store`, `label_store`, `labeled_articles`, `cache_assembly`, `provenance_store`, `validation`, `persisted_student_store`, `derivation_audit`, `ledger`, `student_confidence_by_tag`, `checkpoint`, `provenance`.
+- **Transformation**: student rows become a deduplicated 16-column store in which each article has exactly one label and one recorded source.
+- **Research role**: implements Section 4.1: "Deployment uses the classifier everywhere, routes the 15% low-confidence tail back to the teacher, and keeps teacher labels where they exist ... \$156.29 in total".
+- **Equations**: with the contract's threshold $\theta$ (the paper's 15% tail corresponds to $\theta=0.8$):
+
+$$
+\mathrm{label}(x)=\begin{cases}\mathrm{cached\ teacher},& x\in\mathcal{C}\\ \mathrm{routed\ teacher},& x\notin\mathcal{C}\ \wedge\ \mathrm{conf}(x)\lt\theta\\ \mathrm{student},&\mathrm{otherwise.}\end{cases}
+$$
+
+- **Implementation distinction**: a cached label short-circuits routing, so no article is charged twice. The routing rate must lie in $[0.10,0.20]$; the teacher-call reconciliation passes within 500 calls and halts beyond 10,000. Every student label is re-derived from its persisted head vector.
+
+### Task 19 — `run_task_19`
+
+- **Inputs**: `articles`, `out_dir`; optional `encoder`, `model_name`, `fit_sample_size` (500,000), `eigenvalue_floor` ($10^{-6}$), `n_pairs`, `n_probes`, `n_neighbors`, `seed`; keyword `url_source`, `labels`.
+- **Process**: encodes every article, fits the whitening on a (year, tag)-stratified sample, persists the parameters, applies the persisted transform to all articles, audits the geometry.
+- **Outputs**: `paths` (raw store, parameters, whitened store, validation, deviation log), `validation`, `n_articles`, `n_fit`, `embedding_dim`, `fit_sample_strata`, `deviation_log`.
+- **Transformation**: title, a space and the summary are encoded and L2-normalised, centred, whitened with a full untruncated matrix, and normalised again.
+- **Research role**: serves Section 4.2's clustering "on the cosine similarity of their title-and-summary embeddings"; whitening corrects the anisotropy that otherwise makes a cosine threshold uninterpretable.
+- **Equations**: with $\Sigma=U\Lambda U^\top$ (biased denominator):
+
+$$
+W=U\,\mathrm{diag}\left(\max(\lambda_j,\epsilon)\right)^{-1/2}U^\top,\qquad \tilde x=\frac{W(x-\mu)}{\lVert W(x-\mu)\rVert_2}.
+$$
+
+- **Implementation distinction**: the audit halts when the random-pair cosine median exceeds 0.5 (target 0.4) or the same-URL median falls below 0.9. Without `encoder`, `sentence_transformers` is required. The deviation log discloses that the transform is fitted on a stratified sample of the whole corpus.
+
+### Task 20 — `run_task_20`
+
+- **Inputs**: `articles_df`, `study_config`, `output_root`; keyword `article_resolution`, `labeled_articles`, `embeddings_whitened`, `calendar_sessions` (all four or none).
+- **Process**: resolves nine settings, links stories with no age cap, builds decay curves, calibrates lifetimes; with the keyword inputs it assembles the linker's articles so age is counted in exchange sessions.
+- **Outputs**: `story_age_cosines`, `stories`, `decay_curves`, `story_lifetimes`, `decay_curves_png`, `panel_tags`, `story_lifetime_map`, `resolved_config`, `story_articles`, `assembly_report`.
+- **Transformation**: every joining article's cosine to its story's frozen first-day centroid, by story age, becomes per-tag curves of mean cosine and continued-match share, then one lifetime per tag.
+- **Research role**: implements Section 4.2: "we calibrated per-tag lifetimes by tracking how the similarity of later same-story coverage to the first-day centroid decays with story age, and capped each tag where continued matches become rare".
+- **Equations**: the raw lifetime from the smoothed share $\pi_\tau(a)$; the five named tags are clamped to their caps, the others double the Table 1 mean:
+
+$$
+L^{\mathrm{raw}}_\tau=\min\lbrace a:\pi_\tau(a)\lt\pi_{\mathrm{floor}}\rbrace,\qquad L_\tau=\begin{cases}\max\left(L_{\min},\min(L^{\mathrm{raw}}_\tau,\mathrm{cap}_\tau)\right),&\tau\ \mathrm{named}\\ \max\left(L_{\min},\,2\,\bar L^{\mathrm{T1}}_\tau\right),&\mathrm{otherwise.}\end{cases}
+$$
+
+- **Implementation distinction**: the comparison uses exact rationals, so a share equal to the floor is not a crossing. Lifetimes are re-read at every floor of a grid, and the linker at every threshold of a grid, so a reader can apply another criterion.
+
+### Task 21 — `run_task_21`
+
+- **Inputs**: `articles_with_trading_day` (with whitened embeddings), `lifetimes`, `paper_table1`, `output_dir`; optional `paper_story_count` (1,611,601), `follow_up_target` (0.55), `follow_up_tolerance` (0.03), `max_open_stories_per_symbol_tag` (5), `similarity_threshold` (0.80), `max_intra_cluster_cosine` (0.95), `session_calendar`.
+- **Process**: within-day clustering, cross-day matching in trading-day order, validation.
+- **Outputs**: `day_clusters`, `article_clusters`, `stories`, `cluster_stories`, `open_story_ids`, `cap_hits`, `age_axis`, `validation`, `articles_with_story_id`.
+- **Transformation**: single-link components at cosine $\ge0.80$ within (stock, day, primary tag) become day clusters with re-normalised centroids; each joins the best open story or opens a new one with a deterministic hash identifier.
+- **Research role**: implements Section 4.2: "each day-cluster is then matched against the stock's running stories, so an event continues across days when later coverage stays close to the story's frozen centroid", revealing "that 55% of all articles are follow-up coverage".
+- **Equations**: over open stories $\mathcal{O}$ of the same stock and tag:
+
+$$
+j^\ast=\arg\max_{j\in\mathcal{O},\ \mathrm{age}(j)\le L_\tau}\cos(c_d,\mu_j),\qquad d\to j^\ast\iff\cos(c_d,\mu_{j^\ast})\gt0.80 .
+$$
+
+- **Implementation distinction**: a component whose maximum pairwise cosine exceeds 0.95 is refused (chaining). Centroids are frozen, ties are broken by smaller age, latest update, then identifier, and evictions past the cap are logged. Without `session_calendar`, age runs on weekdays, disclosed as `weekday_approximation` with a warning.
+
+### Task 22 — `run_task_22`
+
+- **Inputs**: `articles_with_story_id`, `labeled_articles`, `articles_with_trading_day`, `symbol_master_indexed`, `study_config`, `output_dir`; keyword `retained_articles`.
+- **Process**: builds the (symbol, trading day, primary tag) membership, aggregates each event, validates cardinalities.
+- **Outputs**: `membership`, `events`, `validation`, `expansion_report`, `build_report`, `proceed_to_task_23`.
+- **Transformation**: each labelled article is expanded over its primary and related tickers; each event key becomes one row with article count, impact, sign, neutral/signed/mixed state, opening share, `any()` attribute rolls and an attention flag (10 or more articles).
+- **Research role**: implements Section 4.2: "an event is a (stock, trading day, tag) aggregate", "the event's impact averages its articles. An event is neutral when every one of its articles is Neutral, and signed otherwise."
+- **Equations**: with codes $\sigma_a\in\lbrace-2,-1,0,1,2\rbrace$:
+
+$$
+I_e=\frac1{n_e}\sum_{a\in e}\sigma_a,\qquad s_e=\mathrm{sign}(I_e),\qquad \mathrm{neutral}(e)\iff\sigma_a=0\ \ \forall a\in e .
+$$
+
+- **Implementation distinction**: a zero impact with non-neutral members is signed by the pole counts, and an exact split is labelled mixed, kept distinct from neutral. The targets 1,862,297 events, 1,317,252 signed, 364,405 neutral and 73% positive are checked with tolerances; Task 29 halts on `proceed_to_task_23 = False`.
+
+### Task 23 — `run_task_23`
+
+- **Inputs**: `events`, `ar_panel`, `calendar` (Task 6 object), `security_master`, `attrition_targets`, `out_dir`; optional `size_bucket_lookup`.
+- **Process**: normalises events onto session ranks, joins each to its 26-offset window, cumulates the four windows with the drop rule, reconciles attrition.
+- **Outputs**: `event_ar_panel`, `event_windows`, `drops`, `attrition`, `paths`.
+- **Transformation**: a left join on integer session rank retrieves $AR$ at offsets $-5..+20$; a missing return anywhere in a window drops the event, with `post_last_price` and `no_prior_close` classified ahead of `event_window_nan`.
+- **Research role**: implements Section 4.3: "we cumulate $AR$ over four windows: days $-5..0$ (which includes day 0), day 0, days $+1..+5$, and days $+6..+20$".
+- **Equations**: equation (B), both endpoints included:
+
+$$
+CAR_{e,w}=\sum_{j\in w}AR_{i,\mathrm{shift}(t_0,j)},\qquad w\in\lbrace[-5,0],[0,0],[1,5],[6,20]\rbrace .
+$$
+
+- **Implementation distinction**: nothing is imputed. The scored count must lie within $1{,}681{,}657\pm30{,}000$ and the skip rate within $0.097\pm0.005$; a skip rate outside $[0.07,0.12]$ raises `AttritionHaltTask23` after the other three artefacts are written.
+
+### Task 24 — `run_task_24`
+
+- **Inputs**: `event_windows` (long, or Task 23's wide form), `size_bucket_lookup`, `output_dir`; optional `events` (required with the wide form).
+- **Process**: builds the neutral cell membership, computes the event-weighted baselines and a calendar-weighted sensitivity, audits the mirror cells.
+- **Outputs**: the step-3 audit record, plus `baseline_table` (`bucket`, `window`, `b`, `n_events`) and `membership`.
+- **Transformation**: neutral events joined to their point-in-time bucket by event year become twelve (bucket, window) means; symbols without a bucket are dropped.
+- **Research role**: implements equation (C), Section 4.3: "Call that the baseline $b_{k,w}$, the mean abnormal return of neutral events in size bucket $k$ over window $w$."
+- **Equations**: over the neutral events $\mathcal{N}_k$ of bucket $k$:
+
+$$
+b_{k,w}=\frac{1}{\lvert\mathcal{N}_k\rvert}\sum_{e\in\mathcal{N}_k}CAR_{e,w}.
+$$
+
+- **Implementation distinction**: a cell with fewer than 100 events warns without halting. The $+6..+20$ cells must match $-0.92\%$, $-0.58\%$, $-0.34\%$ (small, mid, large) within 0.35 percentage points, Section 5.2's mirror diagnostic; a miss halts after the audit is persisted.
+
+### Task 25 — `run_task_25`
+
+- **Inputs**: `events`, `daily_panel`, `out_dir`, `targets`, `tolerances` (Table 2, percent); optional `event_windows`, `size_bucket_lookup`, `baseline_table` (all three required when `events` is Task 22's table).
+- **Process**: computes adjusted per-event returns, verifies the decomposition identity, aggregates the tag map, computes the pooled running total.
+- **Outputs**: `adjusted_per_event`, `identity`, `tag_map`, `reconciliation`, `pooled`, `assembly`.
+- **Transformation**: each signed event's window sums are differenced against its bucket baseline before the sign is applied; tags are aggregated in percent and reconciled with Table 2.
+- **Research role**: implements equation (D), Section 4.3: "we subtract the baseline from the event's abnormal return before applying the sign: $s\,(AR_w - b_{k,w})$", and Figure 1's running total, "+0.579% by the close of publication day ... +0.204% ... The ratio of the two levels is 2.84".
+- **Equations**:
+
+$$
+\mathrm{adj}_{e,w}=s_e\left(CAR_{e,w}-b_{k(e),w}\right),\qquad s_eCAR_{e,w}=\mathrm{adj}_{e,w}+s_eb_{k(e),w},\qquad R(\ell)=\frac{1}{\lvert E\rvert}\sum_{e\in E}\sum_{j=-5}^{\ell}s_eAR_{e,j},\quad \rho=\frac{R(0)}{R(20)}.
+$$
+
+- **Implementation distinction**: the identity halts when the share of violating events exceeds the noise tolerance. An out-of-band Table 2 tag is reported, never raised; p-values are left to Task 27.
+
+### Task 26 — `run_task_26`
+
+- **Inputs**: `events`, `calendar_sessions`, `abnormal_returns`, `size_bucket_lookup`, `baseline_table` (Task 24), `output_dir`; optional `sample_window`.
+- **Process**: builds the session axis once, flags quiet stock-days, sums their windows by bucket, compares with the neutral baseline.
+- **Outputs**: `quiet_days`, `quiet_day_ar`, `falsification` and three paths.
+- **Transformation**: every (stock, session) in the union of calendar and $AR$ dates is flagged; quiet days' window sums are averaged by point-in-time bucket.
+- **Research role**: implements Section 5.2's falsification: "quiet stock-days, defined as days with no event for the stock and none in the prior five trading days, measure the same windows with no news at all. Both drift down."
+- **Equations**: with $E_{i,t}=1$ when stock $i$ has any event (neutral included) on $t$:
+
+$$
+q_{i,t}=1\iff\sum_{j=0}^{5}E_{i,\mathrm{shift}(t,-j)}=0,\qquad \lvert\bar q_k-b_{k,[6,20]}\rvert\le0.35\ \mathrm{pp},\qquad -2\%\le\bar q_k\le0.5\% .
+$$
+
+- **Implementation distinction**: both series must be negative in every bucket. Any breach of the sign rule, the tolerance or the halt band raises `QuietFalsificationHalt` after the comparison is written; the targets are the paper's $-0.74\%$, $-0.88\%$ and $-0.59\%$.
+
+### Task 27 — `run_task_27`
+
+- **Inputs**: `events`, `config` (flat, or STUDY_CONFIG); optional `neutral_baseline_fn` (default: the event-weighted neutral baseline), `out_dir` (required), `event_windows`, `size_bucket_lookup` (required with Task 22's table).
+- **Process**: builds date clusters, runs the date-clustered bootstrap with the baseline re-estimated inside every draw, computes p-values and intervals, applies the conservatism gate.
+- **Outputs**: `cluster_index`, `per_tag`, `n_dates`, `warnings`, `draws`, `draws_fixed`, `per_tag_observed`, `p_values`, `conservatism`, `assembly`, `halt`, `paths`.
+- **Transformation**: trading dates are resampled with replacement (seed 42), drawn events gathered with multiplicity, and each tag's mean adjusted $+6..+20$ return recorded per draw, beside a fixed-baseline variant.
+- **Research role**: implements Section 4.3: "Significance comes from a cluster bootstrap that resamples trading dates (5,000 draws), because events on the same day are cross-sectionally correlated", and the claim that re-estimating the baseline "gives the same or slightly stronger significance".
+- **Equations**: on null-centred draws $d_b=\bar x_b-\bar x$, clipped to $[1/B,1]$:
+
+$$
+p=\frac{2}{B}\min\left(\#\lbrace d_b\ge\bar x\rbrace,\ \#\lbrace d_b\le\bar x\rbrace\right),\qquad \mathrm{CI}_{\mathrm{basic}}=\left[2\bar x-q_{1-\alpha/2},\ 2\bar x-q_{\alpha/2}\right].
+$$
+
+- **Implementation distinction**: percentile and studentized intervals are reported beside the basic one. Centring the draws (ruling of 2026-11-05) tests the paper's zero-drift null. A tag fails conservatism when $p_{\mathrm{drawwise}}\gt p_{\mathrm{fixed}}+\mathrm{tol}$, and any failing tag halts. Draws whose key has no drawn neutral fall back to the full-sample baseline, counted and warned.
+
+### Task 28 — `run_task_28`
+
+- **Inputs**: `p_values` (mapping, or Task 27's table), `event_counts` (mapping, or Task 27's per-tag table), `study_config` (`fdr.n_hypotheses`, `fdr.target_fdr`, `fdr.boundary_band`), `output_dir`.
+- **Process**: sorts the p-values, applies the Benjamini–Hochberg step-up, builds the classified summary, verifies the paper's structure.
+- **Outputs**: `sorted_p_values`, `q_table`, `summary`, `paper_structure`, `halt`.
+- **Transformation**: seventeen p-values become q-values in one descending running-minimum pass, then classes: significant ($q\le0.05$), boundary ($0.05\lt q\lt0.07$), and above that suggestive ($p\le0.05$) or not significant.
+- **Research role**: implements Section 5.3: "at a 5 percent false discovery rate the macro reversal and the capital-returns and earnings continuations survive, the analyst, leadership, launch, and competition results sit at the boundary ($q$ between 0.05 and 0.07), and the guidance continuation is suggestive".
+- **Equations**: with $m=17$:
+
+$$
+q_{(j)}=\min_{l\ge j}\frac{p_{(l)}\,m}{l},\qquad q_{(m+1)}=1;\qquad \hat\pi_0=\frac{\#\lbrace p\gt\lambda\rbrace}{m(1-\lambda)},\quad n^{\mathrm{eff}}_\tau=\frac{n^{\mathrm{dates}}_\tau}{1+(\bar n_\tau-1)\,\mathrm{ICC}_\tau}.
+$$
+
+- **Implementation distinction**: Storey's $\hat\pi_0$ and the effective cluster counts are sensitivities beside the headline, never replacements. A departure from the paper's class structure sets `halt`, and Task 29 stops before the robustness tasks.
+
+### Task 29 — `run_full_pipeline_task_29`
+
+- **Inputs**: `bundle` (`inputs`, optional `services` and `expected_hashes`), `config`, `overrides` (each whitelisted by some stage); keyword `output_dir`.
+- **Process**: resolves the 28 stage callables (Tasks 1–28) from the callable manifest, executes them in dependency order, persists every artefact and value digest, and stops at the first halting stage.
+- **Outputs**: a record with `status`, `reason`, `detail`, `stages`, `execution_order`, `applied_overrides`, `unapplied_overrides`, plus the run manifest on disk.
+- **Transformation**: raw inputs and one configuration become the complete chain from ingestion to q-values, with each stage's outputs bound to the next stage's inputs.
+- **Research role**: the top-level orchestrator of the paper's three stages: "tag every article with a distilled LLM tagger, group articles into stories and events, and measure abnormal returns around those events against a placebo".
+- **Equations**: stage $k$ halts the run when its result matches every key of its halt rule $H_k$:
+
+$$
+\mathrm{halt}_k\iff\forall(\kappa,v)\in H_k:\ \mathrm{result}_k[\kappa]=v,\qquad H_2=H_{27}=H_{28}=\lbrace\mathrm{halt}:\mathrm{True}\rbrace .
+$$
+
+- **Implementation distinction**: stage 13 halts on `proceed_to_task_14 = False` and stage 22 on `proceed_to_task_23 = False`. Delegates are resolved on every call and never cached. An override that no stage whitelists is reported as unapplied, and expected input hashes are verified.
+
+### Task 30 — `run_task_30`
+
+- **Inputs**: `event_windows` (long form), `pooled_baseline` (Task 24), `pooled_tag_map` (Task 25), `headline_tags`, `overrides` (only `baseline_pooling = tag_matched`), `output_dir`; keyword `min_cell_events` (100), `n_draws`, `seed` (42).
+- **Process**: builds the tag-matched baseline with fallback, adjusts every signed event, runs Task 27's bootstrap with a draw-wise tag-matched wrapper and Task 28's step-up, compares with the pooled map.
+- **Outputs**: `config`, `cells`, `adjusted`, `tag_map`, `comparison`, `escalation_required`, `p_values`, `q_values`, `bootstrap_diagnostics`, `paths`.
+- **Transformation**: one pooled baseline per (bucket, window) becomes one baseline per (bucket, tag, window), and the tag map is recomputed under it.
+- **Research role**: implements Section 4.3's variant: it "leaves the earnings continuation and the macro, leadership, and competition reversals essentially unchanged, while the capital-returns estimate shrinks and the launch estimate crosses zero".
+- **Equations**:
+
+$$
+b^{\tau}_{k,w}=\begin{cases}\dfrac1{\lvert\mathcal{N}_{k,\tau}\rvert}\sum_{e\in\mathcal{N}_{k,\tau}}CAR_{e,w},&\lvert\mathcal{N}_{k,\tau}\rvert\ge100\\ b_{k,w},&\mathrm{otherwise,}\end{cases}\qquad \mathrm{adj}^{\tau}_{e,w}=s_e\left(CAR_{e,w}-b^{\tau}_{k(e),w}\right).
+$$
+
+- **Implementation distinction**: fallback cells are flagged per event. Each headline tag is classed unchanged (within 0.10 pp), shrinks, or crosses zero; a sign flip escalates, because the paper's conclusion rests on signs rather than magnitudes.
+
+### Task 31 — `run_task_31`
+
+- **Inputs**: `events` (with `NEW_share`), `ar_panel`, `base_tag_map` (Task 25), `overrides` (NEW-only keys forced), `output_dir`.
+- **Process**: dry-runs the wrapper contracts, filters to first reports, recomputes window sums and the neutral baseline, runs the unchanged Task 25 estimator and identity, aggregates the map with bootstrap p-values and q-values, compares with the base case.
+- **Outputs**: `sample` (`NEW_only`), `base_event_count`, `new_event_count`, `tag_map`, `comparison`, `stages`, `windowed_event_count`, `dropped_at_window`, `identity_check`.
+- **Transformation**: the event set shrinks to events whose every member article is a first report, and the full adjusted estimation is rerun on it.
+- **Research role**: implements Section 4.3's anticipation check: "restricting to first reports shrinks the earnings pre-window from +1.41% to +1.02%, so follow-up coverage inflates measured anticipation by roughly a third", and Table 4's NEW-only column.
+- **Equations**: with $\nu_e$ the share of first reports among event $e$'s articles:
+
+$$
+E^{\mathrm{NEW}}=\lbrace e:\nu_e=1\rbrace,\qquad \overline{CAR}^{\,\mathrm{NEW}}_{\mathrm{earnings},[-5,0]}\lt\overline{CAR}^{\,\mathrm{all}}_{\mathrm{earnings},[-5,0]}.
+$$
+
+- **Implementation distinction**: headline signs must be preserved and post-window magnitudes approximately so; an earnings pre-window that fails to shrink raises `NewOnlyHaltTask31`. Tags with fewer than 100 effective clusters are warned.
+
+### Task 32 — `run_single_tag_task_32`
+
+- **Inputs**: `overrides`: `events_path`, `base_tag_map_path`, `output_dir`; optional `analyst_tag` (`Analyst action`), `n_bootstrap` (200), `seed` (0), `headline_tags`, `flagged_flip_tags`.
+- **Process**: four fixed stages: event construction (the Task 22 adapter), the single-tag filter, the downstream estimator (adjusted mean, date-clustered interval and p-value, BH q-values, analyst cell), the base-case comparison.
+- **Outputs**: `n_base_events`, `n_survived_events`, `survivor_fraction`, `tags`, `analyst`, `analyst_tag`, `n_base_analyst_events`, `n_survived_analyst_events`, `warnings`, `comparison`, `stages_run`, `artifacts`, `status`.
+- **Transformation**: stock-days carrying two or more distinct primary tags are removed in full; the tag map is recomputed on the survivors.
+- **Research role**: implements Table 4's cross-tag attribution check: "restricting to stock-days with exactly one event tag removes that contamination", including the flagged exception that "analyst actions flip to $-0.05\%$ on single-tag days".
+- **Equations**:
+
+$$
+\mathcal{D}_1=\left\lbrace(i,t):\left\lvert\lbrace\tau_e:e\in(i,t)\rbrace\right\rvert=1\right\rbrace .
+$$
+
+- **Implementation distinction**: `single_tag_only` is forced to True and any other request is rejected. A base run with analyst rows but none surviving is a warning, matching the paper's "fewer than seven percent of analyst events sit on single-tag days"; unflagged sign flips escalate.
+
+### Task 33 — `run_teacher_only_task_33`
+
+- **Inputs**: `overrides` (`output_dir`, optional `n_bootstrap_draws` (200), `seed` (0)); optional `events` (otherwise resolved from Task 22 by qualified name).
+- **Process**: filters to all-teacher events, derives stratum weights, builds the raw and the weighted tag maps, compares both with the base map, persists four artefacts.
+- **Outputs**: `config_path`, `raw_tag_map_path`, `weighted_tag_map_path`, `comparison_path`, `weights`, `n_events_input`, `n_teacher_only`, `raw_tag_map`, `weighted_tag_map`, `base_tag_map`, `comparison`, `config`, `event_source`, `dependency_report`.
+- **Transformation**: an event qualifies only when every member article has `label_source = teacher`; weights are applied after event construction and before the cluster bootstrap.
+- **Research role**: implements Table 4's classifier-error check: "recomputing only on events whose articles were labeled directly by the GPT teacher, bypassing the distilled classifier entirely".
+- **Equations**: DEF41 stratum weights with anchor $N_R=29{,}472$, the weighted mean and Kish's effective sample size:
+
+$$
+w_s=\frac{N_R}{N_s}\ \left(1,\ \tfrac{29{,}472}{99{,}991},\ \tfrac{29{,}472}{634{,}750}\right),\qquad \bar a^{\,w}_\tau=\frac{\sum_e w_ea_e}{\sum_e w_e},\qquad \mathrm{ESS}=\frac{(\sum_e w_e)^2}{\sum_e w_e^2}.
+$$
+
+- **Implementation distinction**: the raw map is compositionally selected (confidence routing sends rare tags to the teacher). The weighted map is the headline, labelled equal-stratum rather than corpus-representative, with the departure recorded as a deviation.
+
+### Task 34 — `run_task_34`
+
+- **Inputs**: `events` (five attribute columns, `is_signed`, `adj_post_6_20`, `adj_pre_5_1`, `trading_date`), `config` (`taxonomy`, `bootstrap`, `attribute_analysis`), `output_dir`, `tolerances` (`adj_bar`, `p_value`).
+- **Process**: aggregates ten (attribute, value) slices, runs Task 27's date-clustered bootstrap within each slice, compares with Section 5.4.
+- **Outputs**: `attribute_conditioned`, `attribute_p_values`, `comparison`, `paths`.
+- **Transformation**: signed events become per-slice size, adjusted $+6..+20$ mean and pre-window mean, then within-slice p-values, percentile intervals and effective-cluster warnings.
+- **Research role**: implements the attribute paragraph that closes Section 5.3: "scheduled events show more anticipation and slightly positive adjusted drift (+0.08%, $p = 0.03$) ...; quantified articles show no drift, unquantified ones reverse ($-0.12\%$, $p = 0.01$); rumor-flagged events show the largest pre-windows".
+- **Equations**: for attribute $\alpha$ and value $v$, over signed events only:
+
+$$
+S_{\alpha,v}=\lbrace e:\alpha_e=v\rbrace\cap E^{\mathrm{signed}},\qquad \bar a_{\alpha,v}=\frac{1}{\lvert S_{\alpha,v}\rvert}\sum_{e\in S_{\alpha,v}}\mathrm{adj}_{e,[6,20]} .
+$$
+
+- **Implementation distinction**: the slice is intersected with signed events inside the mask, not after assembly. The `rumor = 1` slice must carry the largest pre-window mean, and a sign flip of the `quantified = 0` slice halts. `assemble_attribute_events_task_34` builds the input from Tasks 22 and 25.
+
+### Task 35 — `run_task_35`
+
+- **Inputs**: `events`, `abnormal_returns`, `output_dir`; keyword `sessions_between` (Task 6), `max_gap_trading_days`, `drop_unlinked`, `pooled_expected`, `tag_expected`, `pooled_tolerance`, `ma_tolerance`; optional `baseline_by_stage`, `baseline_per_session`, `verification_targets`.
+- **Process**: filters signed rumor events, links each to its confirmation, computes five stage returns, compares pooled and per-tag means, persists four artefacts.
+- **Outputs**: the comparison payload extended with `rumor_events`, `rumor_pairing`, `stage_returns`, `targets`, `artifacts`.
+- **Transformation**: each signed rumor is paired with the earliest later same-stock, same-tag event within the gap, and the pair's session-sliced returns are signed by the rumor's direction.
+- **Research role**: implements Section 5.1 and Table 3: "Among 18,618 rumor-flagged signed events, 94% are followed by a non-rumor event with the same tag within 60 trading days (median gap two trading days). The rumor day delivers +0.36%".
+- **Equations**: for pair $(t_r,t_n)$ and rumor sign $s$:
+
+$$
+s\,AR_{t_r},\quad s\sum_{t=t_r+1}^{t_n-1}AR_t,\quad s\,AR_{t_n},\quad s\sum_{t=t_n+1}^{t_n+5}AR_t,\quad s\sum_{t=t_n+6}^{t_n+20}AR_t .
+$$
+
+- **Implementation distinction**: a next-session confirmation has no interior window and is dropped with its key recorded, as is a pair whose panel misses $t_n+20$. With a baseline supplied, each stage also carries $\mathrm{adj}_w=\mathrm{raw}_w-s\,b_w$.
+
+### Task 36 — `run_task_36`
+
+- **Inputs**: `articles` (`article_id`, `source_domain`, `syndication_source`), `events` (article-level, with `NEW_flag` and four window columns), `stock_abs_ar` (own-stock trailing mean $\lvert AR\rvert$), `output_dir`.
+- **Process**: classifies each distinct (domain, syndication) pair into six groups, aggregates (stock, day, tag, group) cells, validates wire fidelity.
+- **Outputs**: `source_group_assignment`, `source_group_table`, `validation` (`status`, `wire_pre_drift`, `group_pre_drift`, `failures`), `written`.
+- **Transformation**: article provenance becomes a group, and group cells carry $n$, NEW share, the four window means and the day-0 $\lvert AR\rvert$ ratio; the join is integrity-checked first.
+- **Research role**: implements Section 5.4 and Table 5: "Press wires, which carry company and regulator releases, show none at all ($-0.06\%$): the release is the event, not commentary on one."
+- **Equations**: the day-0 ratio against the stock's normal day:
+
+$$
+\rho^{(0)}_{g}=\frac{1}{n_g}\sum_{e\in g}\frac{\lvert AR_{e,0}\rvert}{\overline{\lvert AR\rvert}_{i(e)}},\qquad \mathrm{pre}_{\mathrm{wires}}\in[-0.06\%-0.15,\ -0.06\%+0.15]\ \mathrm{pp}.
+$$
+
+- **Implementation distinction**: a wire-syndicated article on a retail domain is classified as press wire. A wire pre-drift outside its band voids the six-way analysis and raises after the three artefacts are written; the day-0 ratio targets carry a 0.03 tolerance.
+
+### Task 37 — `run_task_37`
+
+- **Inputs**: `frames` (`abnormal_returns`: `symbol_id`, `date`, `ar`; `events`: key, symbol, day, tag, article count, publication window, `is_neutral`), `config`, `output_dir`.
+- **Process**: computes each stock's typical absolute move, builds twelve width ratios (six classes, two horizons), verifies seven Section 5.5 figures.
+- **Outputs**: `typical_day_path`, `width_ratios_path`, `width_comparison_path`, `n_rows`, `n_symbols`, `n_valid`, `comparison`.
+- **Transformation**: the $AR$ panel becomes a trailing-only denominator per (stock, session), and events become class means of absolute moves relative to it.
+- **Research role**: implements Section 5.5: "Neutral guidance events come with publication-day moves 1.29 times the stock's normal day and 1.23 times over the following week"; "All of these are ratios of a stock's absolute move to its own typical day".
+- **Equations**: on the session grid, with $N\ge126$ non-missing values in $[t-252,t)$:
+
+$$
+\overline{\lvert AR\rvert}_{i,t}=\frac1N\sum_{s\in[t-252,t)}\lvert AR_{i,s}\rvert,\qquad w(C,0)=\underset{C}{\mathrm{mean}}\frac{\lvert AR_{i,t_0}\rvert}{\overline{\lvert AR\rvert}_{i,t_0}},\qquad w(C,\mathrm{wk})=\underset{C}{\mathrm{mean}}\frac{\frac15\sum_{t=t_0+1}^{t_0+5}\lvert AR_{i,t}\rvert}{\overline{\lvert AR\rvert}_{i,t_0}}.
+$$
+
+- **Implementation distinction**: windows count exchange sessions, not rows, and a session a symbol skips is missing. The week numerator is mean $\lvert AR\rvert$ (ruling of 2026-11-06). Targets 1.29, 1.23, 1.11, 1.36, 1.05 (tolerance 0.10) and 1.18, 1.05 (0.08); a miss raises `WidthTargetHaltTask37` after all three artefacts are written.
+
+### Task 38 — `run_task_38`
+
+- **Inputs**: `frames` (`events`; a daily return panel from `prices`, `ars`, `abnormal_returns` or `returns`; `betas` or a `beta` column), `config`, `output_dir`.
+- **Process**: verifies the module's closed form, persists the five-callable catalogue, runs the three Table 6 books over the cost grid, validates the construction on a synthetic 100-event sample.
+- **Outputs**: `task`, `manifest_path`, `results_path`, `book_daily_path`, `diagnostics_path`, `validation_path`, `validation_passed`, `n_result_rows`, `strategies`, `event_counts`, `size_filter_applied`, `cost_grid_bps_per_side`, `holding_window_days`.
+- **Transformation**: events become positions with a side rule, expanded over sessions $t_0+6..t_0+20$ and equally weighted across the open set each session.
+- **Research role**: implements Section 5.6: "a position opens at the close of day +5 ... and closes at the close of day +20 ..., all open positions are equally weighted and rebalanced daily, and returns are measured on beta-hedged abnormal returns".
+- **Equations**: side $-\mathrm{sign}(s)$ (fade), $-1$ (direction-blind), $+\mathrm{sign}(s)$ (legal), with the event-day beta held fixed:
+
+$$
+h_{i,t}=\mathrm{side}_i\left(r_{i,t}-\beta_{i,t_0}r_{m,t}\right),\quad g_t=\underset{i\ \mathrm{open}}{\mathrm{mean}}\,h_{i,t},\quad n^{c}_t=g_t-\frac{c}{10^4}\,\frac{\mathrm{entries}_t+\mathrm{exits}_t}{n^{\mathrm{open}}_t},\quad \mathrm{SR}=\sqrt{252}\,\frac{\bar r}{\hat\sigma_r}.
+$$
+
+- **Implementation distinction**: the closed-form check raises `PortfolioContractError` before any caller data is used, and a failed synthetic validation raises `PortfolioValidationError`. Two simultaneous positions on one stock stay two positions.
+
+### Task 39 — `run_portfolio_book_verification_task_39`
+
+- **Inputs**: `events`, `event_windows` (with `cum_post_long`), `returns_panel`, `betas`, `market_returns`, `study_config`, `output_dir`; optional `cost_grid_bps_per_side` (pinned $[5,10,20]$), `table6_reference`.
+- **Process**: builds the three book definitions from `portfolios`, constructs each book's daily gross and net series, cross-checks against Task 38, verifies economic significance.
+- **Outputs**: `book_config`, `daily_returns`, `verification`, `task38_crosscheck`, `artifacts` (three paths).
+- **Transformation**: Book A fades signed small-cap launch and partnership events; Book B shorts every covered small-cap event, neutral or signed; Book C follows signed small-cap legal events. Each becomes a daily series with one net series per cost level.
+- **Research role**: implements Table 6 and Figure 5: "The fading strategy's entire edge is the background drift; the news direction contributes nothing."
+- **Equations**: annualisation and the superimposition test:
+
+$$
+\mathrm{AR}^{\mathrm{ann}}=252\,\bar g,\qquad \mathrm{SR}=\sqrt{252}\,\frac{\bar g-r_f/252}{\hat\sigma_g},\qquad \max_t\left\lvert\mathrm{cum}_A(t)-\mathrm{cum}_B(t)\right\rvert\le0.01 .
+$$
+
+- **Implementation distinction**: the 0.01 band is reported beside a paired $t$-test and a 2,000-draw Rademacher sign-flip null with $p=(1+\#\lbrace\mathrm{null}\ge\mathrm{obs}\rbrace)/(B+1)$. Borrow and locate costs are not modelled, so every Sharpe ratio is an upper bound. Without a supplied reference, Table 6 is reported as `data_absent`.
+
+### Task 40 — `run_task_40`
+
+- **Inputs**: `counts` (fifteen conservation counts), `tolerances` (five), `core_results` (fourteen), `secondary_results` (nine), `tables` (`table_1`…`table_6`), `q_values` (Task 28), `figure_data` (`figure_1`…`figure_5`), `study_config`, `output_dir`.
+- **Process**: builds the conservation ledger, runs the dual-lens verification, assembles six q-annotated tables, renders five figures, writes the reproduction report.
+- **Outputs**: `ledger`, `verification`, `tables`, `figures`, `paths`, `criterion_A_pass`, `criterion_B_supported`, `all_ledger_pass`, `disclosed_call_gap`, `table_paths`, `figure_paths`, `row_counts`, `deviations`.
+- **Transformation**: upstream measurements are verified, joined and rendered; nothing new is computed and no divergence is rounded into agreement.
+- **Research role**: closes the pipeline against Sections 3 and 4: "1,862,297 events, of which 1,681,657 are scored against prices: 1,317,252 signed ... and 364,405 neutral", and "\$29.34 for the 139,464 teacher calls".
+- **Equations**: the conservation chain and its identities:
+
+$$
+70\mathrm{M}\to4.57\mathrm{M}\xrightarrow{-3.4\%}4.41\mathrm{M}\to1{,}862{,}297\xrightarrow{-9.7\%}1{,}681{,}657=1{,}317{,}252+364{,}405,\qquad 29{,}472+99{,}991+10{,}000=139{,}463 .
+$$
+
+- **Implementation distinction**: the two filters are one-sided containments, $0\lt\mathrm{actual}\le\mathrm{expected}$. The one-call gap $139{,}464-139{,}463$ is disclosed, never repaired. Criterion B (rebuilding the label store) is reported strictly from `criterion_B_feasible_from_paper`, because the corpus is proprietary; failures enter `deviation_log.json` with their size relative to tolerance.
