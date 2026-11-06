@@ -129,36 +129,36 @@ The paper numbers no equations. The forms below follow its Section 4.3 and Secti
 **Abnormal returns.** With $r_{i,t}$ the stock's daily simple return and $r_{m,t}$ the S&P 500 return measured through SPY:
 
 $$
-AR_{i,t} = r_{i,t} - \beta_{i,t}\, r_{m,t},
+AR_{i,t} = r_{i,t} - \beta_{i,t}\thinspace r_{m,t},
 $$
 
 where $\beta_{i,t}$ is a rolling 252-day OLS beta as of day $t$, with a minimum of 126 observations and a missing beta set to 1:
 
 $$
-\hat\beta_{i,t}=\begin{cases}\dfrac{\sum_{s\in W_t}(r_{i,s}-\bar r_i)(r_{m,s}-\bar r_m)}{\sum_{s\in W_t}(r_{m,s}-\bar r_m)^2}, & n_t\ge 126,\\[2mm] 1, & n_t<126.\end{cases}
+\hat\beta_{i,t}=\begin{cases}\dfrac{\sum_{s\in W_t}(r_{i,s}-\bar r_i)(r_{m,s}-\bar r_m)}{\sum_{s\in W_t}(r_{m,s}-\bar r_m)^2}, & n_t\ge 126,\cr 1, & n_t<126.\end{cases}
 $$
 
 **Event windows.** Around each event $e$ on stock $i$ at session $t_0$, abnormal returns are cumulated over four windows of exchange sessions: days $-5..0$ (which includes day 0), day 0, days $+1..+5$ and days $+6..+20$:
 
 $$
-CAR_{e,w}=\sum_{j\in w}AR_{i,t_0+j},\qquad w\in\lbrace[-5,0],\,[0,0],\,[+1,+5],\,[+6,+20]\rbrace .
+CAR_{e,w}=\sum_{j\in w}AR_{i,t_0+j},\qquad w\in\lbrace[-5,0],\thinspace [0,0],\thinspace [+1,+5],\thinspace [+6,+20]\rbrace .
 $$
 
 **The placebo baseline and the adjusted estimator.** $b_{k,w}$ is the mean abnormal return of neutral events in annual dollar-volume size bucket $k$ over window $w$. Signed events are stacked by sentiment sign $s_e\in\lbrace-1,+1\rbrace$, and the baseline is subtracted *before* the sign is applied:
 
 $$
-b_{k,w}=\frac{1}{\lvert\mathcal{N}_k\rvert}\sum_{e\in\mathcal{N}_k}CAR_{e,w},\qquad \mathrm{adj}_{e,w}=s_e\left(CAR_{e,w}-b_{k(e),w}\right),\qquad s_e\,CAR_{e,w}=\mathrm{adj}_{e,w}+s_e\,b_{k(e),w}.
+b_{k,w}=\frac{1}{\lvert\mathcal{N}_k\rvert}\sum_{e\in\mathcal{N}_k}CAR_{e,w},\qquad \mathrm{adj}_{e,w}=s_e\left(CAR_{e,w}-b_{k(e),w}\right),\qquad s_e\thinspace CAR_{e,w}=\mathrm{adj}_{e,w}+s_e\thinspace b_{k(e),w}.
 $$
 
-The identity on the right is why one negative drift appears as reversal after good news and continuation after bad news: raw post-event drift of $-0.62\%$ after positive and $+0.63\%$ after negative news both collapse to within 0.02% of zero after adjustment.
+The identity on the right is why one negative drift appears as reversal after good news and continuation after bad news: raw post-event drift of −0.62% after positive and +0.63% after negative news both collapse to within 0.02% of zero after adjustment.
 
-**The pooled running total.** Starting five days before publication, the average daily abnormal return in the news direction is accumulated; its ratio at day 0 to day 20 measures how complete the move was (paper: $0.579\%/0.204\%=2.84$):
+**The pooled running total.** Starting five days before publication, the average daily abnormal return in the news direction is accumulated; its ratio at day 0 to day 20 measures how complete the move was (paper: 0.579%/0.204%=2.84):
 
 $$
-R(\ell)=\frac{1}{\lvert E\rvert}\sum_{e\in E}\sum_{j=-5}^{\ell}s_e\,AR_{e,j},\qquad \rho=\frac{R(0)}{R(20)} .
+R(\ell)=\frac{1}{\lvert E\rvert}\sum_{e\in E}\sum_{j=-5}^{\ell}s_e\thinspace AR_{e,j},\qquad \rho=\frac{R(0)}{R(20)} .
 $$
 
-**The falsification test.** A quiet stock-day has no event for the stock and none in the prior five trading days, so its windows measure drift with no news at all. Both the quiet days and the neutral events must drift down by comparable amounts (paper: neutral $-0.92/-0.58/-0.34\%$ and quiet $-0.74/-0.88/-0.59\%$ for small, mid and large caps):
+**The falsification test.** A quiet stock-day has no event for the stock and none in the prior five trading days, so its windows measure drift with no news at all. Both the quiet days and the neutral events must drift down by comparable amounts (paper: neutral −0.92/−0.58/−0.34% and quiet −0.74/−0.88/−0.59% for small, mid and large caps):
 
 $$
 q_{i,t}=1\iff \sum_{j=0}^{5}E_{i,t-j}=0 .
@@ -167,7 +167,7 @@ $$
 **Inference.** Significance comes from a bootstrap that resamples trading dates (5,000 draws), because same-day events are cross-sectionally correlated. The notebook computes the two-sided p-value on null-centred draws $d_b=\bar x_b-\bar x$ (a convention it records), re-estimating the baseline inside every draw. Across the seventeen tags it applies the Benjamini–Hochberg step-up:
 
 $$
-p=\frac{2}{B}\min\left(\#\lbrace d_b\ge \bar x\rbrace,\ \#\lbrace d_b\le \bar x\rbrace\right),\qquad q_{(j)}=\min_{l\ge j}\frac{p_{(l)}\,m}{l},\quad m=17 .
+p=\frac{2}{B}\min\left(\left\lvert\lbrace d_b\ge \bar x\rbrace\right\rvert,\ \left\lvert\lbrace d_b\le \bar x\rbrace\right\rvert\right),\qquad q_{(j)}=\min_{l\ge j}\frac{p_{(l)}\thinspace m}{l},\quad m=17 .
 $$
 
 **Width.** Second moments are ratios of a stock's absolute move to its own typical day, so the background drift does not enter them (paper: neutral guidance 1.29 on the day and 1.23 over the week):
@@ -179,7 +179,7 @@ $$
 **Economic significance.** Calendar-time portfolios open at the close of day $+5$ and close at the close of day $+20$, equally weight all open positions, rebalance daily and hedge each stock leg with a beta-sized index position:
 
 $$
-h_{i,t}=\mathrm{side}_i\left(r_{i,t}-\beta_{i,t_0}\,r_{m,t}\right),\qquad \mathrm{SR}=\sqrt{252}\,\frac{\bar r}{\hat\sigma_r}.
+h_{i,t}=\mathrm{side}_i\left(r_{i,t}-\beta_{i,t_0}\thinspace r_{m,t}\right),\qquad \mathrm{SR}=\sqrt{252}\thinspace \frac{\bar r}{\hat\sigma_r}.
 $$
 
 The fading book (short positive small-cap launch and partnership news, long negative) earns a Sharpe ratio of 1.35, the same as shorting every covered small cap: the news direction adds nothing.
@@ -532,7 +532,7 @@ The section below is identical to [`usage_example.md`](usage_example.md).
 
 This guide demonstrates the study interface `run_task_34` of the Python reproduction of *Buy the Rumor, Sell the News: When Is News Priced In?* (Kargarzadeh, Khaledian, Parvini, Ghatak and Khaledian; AI4F 2026 at ICAIF 2026, [arXiv:2608.14014](https://arxiv.org/abs/2608.14014)). Python implementation author: **CS Chirinda**.
 
-In this notebook `run_task_34` is the **attribute-conditioned analysis** of the paper's attribute paragraph (Section 5.3: "scheduled events show more anticipation and slightly positive adjusted drift (+0.08%, $p = 0.03$) ...; quantified articles show no drift, unquantified ones reverse ($-0.12\%$, $p = 0.01$); rumor-flagged events show the largest pre-windows"). It does not read raw tables. Its input is the event table with the five attributes and the adjusted returns $s\,(AR_w - b_{k,w})$ of Section 4.3, and those exist only after the upstream pipeline has run. The example therefore runs the study end to end:
+In this notebook `run_task_34` is the **attribute-conditioned analysis** of the paper's attribute paragraph (Section 5.3: "scheduled events show more anticipation and slightly positive adjusted drift (+0.08%, $p = 0.03$) ...; quantified articles show no drift, unquantified ones reverse (−0.12%, $p = 0.01$); rumor-flagged events show the largest pre-windows"). It does not read raw tables. Its input is the event table with the five attributes and the adjusted returns $s\thinspace (AR_w - b_{k,w})$ of Section 4.3, and those exist only after the upstream pipeline has run. The example therefore runs the study end to end:
 
 ```text
 seven raw tables (Faker)  ->  run_full_pipeline_task_29 (Tasks 1-28)
@@ -2738,36 +2738,36 @@ print(stage_table.to_string(index=False))
 **Output**
 
 ```text
-status=halted reason=stage_halted (27 s)
+status=halted reason=stage_halted (31 s)
 detail: task_29_stage_27 halted on halt
            stage           delegate  status  seconds
-task_29_stage_01  nbmain:run_task_1 success     0.19
+task_29_stage_01  nbmain:run_task_1 success     0.22
 task_29_stage_02  nbmain:run_task_2 success     0.19
-task_29_stage_03  nbmain:run_task_3 success     0.32
-task_29_stage_06  nbmain:run_task_6 success     0.46
-task_29_stage_04  nbmain:run_task_4 success     0.21
+task_29_stage_03  nbmain:run_task_3 success     0.34
+task_29_stage_06  nbmain:run_task_6 success     0.43
+task_29_stage_04  nbmain:run_task_4 success     0.25
 task_29_stage_05  nbmain:run_task_5 success     0.17
-task_29_stage_10 nbmain:run_task_10 success     0.14
+task_29_stage_10 nbmain:run_task_10 success     0.22
 task_29_stage_11 nbmain:run_task_11 success     0.02
 task_29_stage_12 nbmain:run_task_12 success     0.01
-task_29_stage_13 nbmain:run_task_13 success     0.17
+task_29_stage_13 nbmain:run_task_13 success     0.20
 task_29_stage_14 nbmain:run_task_14 success     0.03
-task_29_stage_15 nbmain:run_task_15 success     3.78
-task_29_stage_16 nbmain:run_task_16 success     0.28
-task_29_stage_17 nbmain:run_task_17 success     0.63
-task_29_stage_18 nbmain:run_task_18 success     0.53
-task_29_stage_19 nbmain:run_task_19 success     1.59
-task_29_stage_20 nbmain:run_task_20 success     3.20
-task_29_stage_21 nbmain:run_task_21 success     0.49
-task_29_stage_22 nbmain:run_task_22 success     0.48
-task_29_stage_07  nbmain:run_task_7 success     0.12
-task_29_stage_08  nbmain:run_task_8 success     0.56
-task_29_stage_09  nbmain:run_task_9 success     0.12
-task_29_stage_23 nbmain:run_task_23 success     0.13
-task_29_stage_24 nbmain:run_task_24 success     0.12
-task_29_stage_25 nbmain:run_task_25 success     0.12
-task_29_stage_26 nbmain:run_task_26 success     0.08
-task_29_stage_27 nbmain:run_task_27 success    12.36
+task_29_stage_15 nbmain:run_task_15 success     5.66
+task_29_stage_16 nbmain:run_task_16 success     0.53
+task_29_stage_17 nbmain:run_task_17 success     0.68
+task_29_stage_18 nbmain:run_task_18 success     0.58
+task_29_stage_19 nbmain:run_task_19 success     1.52
+task_29_stage_20 nbmain:run_task_20 success     3.70
+task_29_stage_21 nbmain:run_task_21 success     0.41
+task_29_stage_22 nbmain:run_task_22 success     0.37
+task_29_stage_07  nbmain:run_task_7 success     0.13
+task_29_stage_08  nbmain:run_task_8 success     0.78
+task_29_stage_09  nbmain:run_task_9 success     0.17
+task_29_stage_23 nbmain:run_task_23 success     0.16
+task_29_stage_24 nbmain:run_task_24 success     0.14
+task_29_stage_25 nbmain:run_task_25 success     0.13
+task_29_stage_26 nbmain:run_task_26 success     0.09
+task_29_stage_27 nbmain:run_task_27 success    12.52
 ```
 
 Stages 1–27 completed with status `success`, and they ran in dependency order rather than numeric order (for example, stages 7–9 run after stage 22). The run then **halted at stage 27 on its own result**. The stages that passed include:
@@ -3054,7 +3054,7 @@ hypotheses: 10 | control: none
 
 1. **Synthetic world:** Faker and a seeded NumPy process generate the seven raw DataFrames (`raw_crawl`, `retained_articles`, `raw_prices`, `symbol_master`, `exchange_calendar`, `market_proxy_prices`, `labeled_articles`) with their specified columns, on real XNYS sessions. The world plants the Section 5.2 background drift, the Table 2 per-tag drifts, the attribute semantics, rumor pre-drift and halts worth 9.7% of events.
 2. **Configuration:** `config.yaml` is read with `yaml.safe_load` into `config`. A copy, `pipeline_config`, is resized to the world's counts and given Task 1's schema shape. No method parameter changes.
-3. **Pipeline:** `run_full_pipeline_task_29` runs the seven tables, 11 further inputs and 9 offline services through Tasks 1–27 in dependency order. That covers ingestion, quality, cleansing, deduplication and the 16:00 roll; the security master and calendar; returns, betas, $AR_t = r_t - \beta_t r_{m,t}$ and size terciles; the gate and teacher prompts, bootstrap labels, student training, active learning, retraining and deployment routing; embeddings, story lifetimes and stories; events; window cumulations; the neutral baseline $b_{k,w}$; the adjusted estimator $s\,(AR_w - b_{k,w})$; and the quiet-day falsification. Stage 27's conservatism gate then halts, as it should for cells of a dozen events.
+3. **Pipeline:** `run_full_pipeline_task_29` runs the seven tables, 11 further inputs and 9 offline services through Tasks 1–27 in dependency order. That covers ingestion, quality, cleansing, deduplication and the 16:00 roll; the security master and calendar; returns, betas, $AR_t = r_t - \beta_t r_{m,t}$ and size terciles; the gate and teacher prompts, bootstrap labels, student training, active learning, retraining and deployment routing; embeddings, story lifetimes and stories; events; window cumulations; the neutral baseline $b_{k,w}$; the adjusted estimator $s\thinspace (AR_w - b_{k,w})$; and the quiet-day falsification. Stage 27's conservatism gate then halts, as it should for cells of a dozen events.
 4. **Interface inputs:** `assemble_attribute_events_task_34` joins Task 22's events to Task 25's adjusted returns. The tolerances come from Task 34's step text.
 5. **Interface:** `run_task_34` aggregates the ten attribute slices over signed events, bootstraps each slice by trading date (5,000 draws, DEF21 seed), and compares the slices with the Section 5.3 attribute targets. It halts only on a `quantified = 0` sign flip. It writes three artefacts and returns the two tables, the comparison and their paths.
 6. **Outcome:** the unquantified reversal (−0.122%, $p = 0.003$) and the rumor pre-window ordering reproduce. The scheduled slices deviate and are reported as findings, with ten unadjusted hypotheses disclosed.
