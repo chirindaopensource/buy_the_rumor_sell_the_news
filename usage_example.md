@@ -2576,3 +2576,50 @@ What the wrappers keep from the notebook, and where they cannot:
 - **Decoding, where gpt-5-mini differs from DEF14.** It is a reasoning model, and its API accepts only the default temperature and top_p. The pinned 0.0 / 1.0 are therefore not sent, and a `RuntimeWarning` says so. The 200-token cap goes out as `max_completion_tokens`, which also covers hidden reasoning tokens, so `reasoning_effort="minimal"` is the default. If the cap is spent before any output, the reply is empty (`finish_reason="length"`) and counts as unusable.
 - **Prompt caching.** The frozen template is about 3,200 characters, roughly 800 tokens, which is below the 1,024 tokens Azure needs before it caches a prompt. Task 16's ledger will likely show no cache hits, even though `teacher.prefix_caching_required` is true.
 - **Model version.** Every reply records the model version Azure served (`served_models` in `teacher.audit()` and in the call log). It can fill `teacher_model_version_string`, which the notebook leaves unresolved.
+
+### **Appendix: Training the Real distilroberta-base Student**
+
+The example's student is `TinyStudent`, a 32-wide embedding classifier. `distilroberta_student.py` (next to the notebook) supplies the paper's student, built to Task 14's specification:
+- distilroberta-base, with no pooler;
+- masked mean pooling (DEF17);
+- seven linear heads: 17 primary, 18 secondary and five attributes;
+- Task 15's numeral-preserving truncation (DEF18) at inference.
+
+It replaces the four student services, the codec in the training configuration, and the checkpoint files Task 14 hashes.
+
+```python
+# =============================================================================
+# Appendix: replacing the four student stand-ins with distilroberta-base
+# =============================================================================
+# Needs: python -m pip install transformers (torch is already required).
+from distilroberta_student import (
+    check_against_task14_inventory, checkpoint_files, make_student_services)
+
+# Downloads distilbert/distilroberta-base once (weights and tokenizer), adds the
+# seven heads, and places the network on CUDA, Apple MPS or the CPU.
+student = make_student_services(seed=14)
+
+# Prove the network is the one Task 14 specifies, parameter by parameter.
+inventory = build_student_parameter_inventory_task_14(
+    validate_backbone_config_task_14(PINNED_BACKBONE))
+print(check_against_task14_inventory(student.model, inventory))
+
+# One module serves all four services. Task 15 trains it in place and Task 17
+# warm-starts it in place, so Task 16 scores with v1 and Task 18 with v2.
+bundle["services"] = {**bundle["services"], **student.services()}
+# Task 15 reads the codec from its training configuration.
+bundle["inputs"]["student_training_config"] = {
+    **bundle["inputs"]["student_training_config"],
+    **student.training_config_entries(),
+}
+# Task 14 hashes the real checkpoint files.
+bundle["inputs"]["student_checkpoint_paths"] = checkpoint_files()
+```
+
+How the module fits the notebook's conventions:
+
+- **The parameter names are Task 14's.** The backbone's `embeddings` and `encoder` are registered directly on the student, and the heads are named `primary_tag`, `secondary_tag`, `scheduled` and so on. Every name and shape in `build_student_parameter_inventory_task_14` is matched, with one reported deviation: the checkpoint carries a 1×768 token-type table (`type_vocab_size = 1`), while Task 14 pins 0. That adds 768 parameters, giving 81,558,568 against the inventory's 81,557,800. Both lie within Task 14's ±1,000,000 band around the paper's 81,496,320.
+- **The output is Task 15's layout.** `forward(input_ids, attention_mask)` returns 40 logits per article, ordered primary (17), secondary (18), attributes (5).
+- **Padding cannot change the answer.** Tasks 15 and 17 pad with id 0, which is RoBERTa's `<s>`, not its pad (1). The network rebuilds each row from the mask as `<s> content </s>` and passes explicit position ids, so the pad id is never read.
+- **Long inputs fit.** Task 15 sends up to 512 content tokens. RoBERTa's 514 position slots leave room for 512 tokens including `<s>` and `</s>`, so the network keeps the first 510 content tokens. At most two tokens of the numeral-preserving tail are dropped.
+- **Inference sees the training text.** `student_model` (Task 16) and `student_predict_fn` (Tasks 17 and 18) apply Task 15's truncation to `title + " " + body` before scoring. They score in minibatches sorted by length and restore the module's training mode afterwards.
