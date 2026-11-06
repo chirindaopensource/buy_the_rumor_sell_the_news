@@ -1,0 +1,1746 @@
+{
+  "meta": {
+    "paper_title": "Buy the Rumor, Sell the News: When Is News Priced In?",
+    "venue": "ACM Conference on AI in Finance (AI4F '26), Milan",
+    "config_schema_version": "1.0",
+    "reproduction_criteria": {
+      "criterion_A_econometric": "reproduce Tables 2-6 and Figs 1-5 given any label store, to reported precision",
+      "criterion_B_end_to_end": "reproduce the label store itself",
+      "criterion_B_feasible_from_paper": false
+    },
+    "published_repositories": [],
+    "published_data_links": [],
+    "sole_data_access_route": "info@zanista.ai",
+    "published_dois": [
+      "https://ssrn.com/abstract=4416687",
+      "doi:10.2139/ssrn.5688064",
+      "doi:10.3389/frai.2025.1608365",
+      "doi:10.1016/j.frl.2024.105227",
+      "doi:10.1016/j.jfineco.2026.104335",
+      "doi:10.18653/v1/2024.nlpcss-1.9",
+      "doi:10.1145/3677052.3698694",
+      "doi:10.18653/v1/2025.acl-long.139"
+    ],
+    "published_arxiv_ids": [
+      "2503.21422",
+      "2502.10008",
+      "2601.11958",
+      "2512.23847",
+      "2509.16707",
+      "2502.21206",
+      "2504.08386",
+      "2407.17866",
+      "2512.19484",
+      "2602.19919"
+    ],
+    "project": "buy_the_rumor_sell_the_news"
+  },
+  "llm_api": {
+    "teacher": {
+      "provider": "Azure OpenAI",
+      "model_name": "gpt-5-mini",
+      "api_key": null,
+      "api_key_env_var": "AZURE_OPENAI_API_KEY",
+      "endpoint_env_var": "AZURE_OPENAI_ENDPOINT",
+      "api_version_env_var": "AZURE_OPENAI_API_VERSION",
+      "deployment_name_env_var": "AZURE_OPENAI_DEPLOYMENT",
+      "model_version_string": null,
+      "transport": "https",
+      "retry_max_attempts": null,
+      "retry_backoff_seconds": null,
+      "timeout_seconds": null,
+      "idempotency_key_field": "article_id",
+      "prefix_caching_enabled": true,
+      "batch_api_used": null
+    },
+    "gate": {
+      "provider": null,
+      "model_name": null,
+      "model_version_string": null,
+      "api_key": null,
+      "api_key_env_var": null,
+      "endpoint_env_var": null,
+      "transport": null
+    },
+    "embedder": {
+      "provider": null,
+      "model_name": null,
+      "model_version_string": null,
+      "api_key": null,
+      "hosting": null
+    },
+    "student_runtime": {
+      "inference_hardware": "MacBook Pro M4 Pro, 24 GB RAM",
+      "throughput_articles_per_sec": [
+        125,
+        160
+      ],
+      "mixed_precision": null,
+      "batch_inference_size": null
+    },
+    "cost_accounting": {
+      "cost_per_teacher_call_usd": 0.0002,
+      "cost_training_validation_usd": 29.34,
+      "teacher_calls_training_validation": 139464,
+      "cost_total_usd": 156.29,
+      "routed_calls_implied": 634750,
+      "price_sheet_date": null
+    }
+  },
+  "raw_input_schemas": {
+    "crawler_record_r0": {
+      "crawl_id": [
+        "string",
+        "[I]",
+        "unique fetch id; required for idempotent re-ingestion at 250k+ URLs/day"
+      ],
+      "url": [
+        "string",
+        "[I]",
+        "verbatim retrieved address incl. tracking params; syndication-chain evidence"
+      ],
+      "url_canonical": [
+        "string",
+        "[NS]",
+        "normalized URL; paper says 'deduplicated' but never which key is authoritative"
+      ],
+      "fetched_at_utc": [
+        "datetime64[ns, UTC]",
+        "[I]",
+        "crawl time, NOT publication time; conflating them injects crawler latency into event time"
+      ],
+      "http_status": [
+        "Int32",
+        "[NS]",
+        "exclude 404/301/503 that would enter as empty bodies"
+      ],
+      "content_type": [
+        "string",
+        "[NS]",
+        "HTML vs PDF vs feed; the gate presumes article-like text"
+      ],
+      "source_domain": [
+        "string",
+        "[S]",
+        "§3 names 'source domain'; sole input to the six-way source grouping"
+      ],
+      "title": [
+        "string",
+        "[S]",
+        "§3 'title' read by the gate LLM"
+      ],
+      "body": [
+        "string",
+        "[S]",
+        "§3 'body'; length may exceed any model input window"
+      ],
+      "meta_author": [
+        "string",
+        "[S] as metadata",
+        "metadata keys never enumerated; authorship signals promotional/syndicated catalogues"
+      ],
+      "meta_section": [
+        "string",
+        "[S] as metadata",
+        "editorial section; disambiguates Price commentary from Earnings results"
+      ],
+      "published_declared": [
+        "string",
+        "[S] as 'publication timestamp'",
+        "kept RAW (unparsed); declared timestamps arrive in heterogeneous formats"
+      ],
+      "published_declared_tz": [
+        "string",
+        "[I]",
+        "IANA zone; decisive for the 16:00 NY rule across DST transitions"
+      ],
+      "syndication_source": [
+        "string",
+        "[I]",
+        "upstream wire if disclosed; separates a wire original from a portal reprint"
+      ],
+      "paywall_flag": [
+        "boolean",
+        "[NS]",
+        "truncated bodies depress the 'quantified' attribute; correlated with outlet quality"
+      ],
+      "language": [
+        "string",
+        "[NS]",
+        "non-English bodies yield spurious Neutral sentiment and tag noise"
+      ],
+      "tickers_mentioned_raw": [
+        "object",
+        "[NS]",
+        "list[str]; raw material for linking to the ~3,000-name universe; one-to-many case is where Macro/Competition are born"
+      ],
+      "body_length_chars": [
+        "Int32",
+        "[NS]",
+        "proxy for truncation and wire brevity"
+      ],
+      "content_simhash": [
+        "string",
+        "[NS]",
+        "near-duplicate fingerprint; threshold is a free parameter controlling retained volume"
+      ],
+      "near_duplicate_of": [
+        "string",
+        "[NS]",
+        "pointer to surviving record; which record survives a cluster fixes its timestamp"
+      ]
+    },
+    "retained_article_r1": {
+      "article_id": [
+        "string",
+        "[I]",
+        "primary key; label provenance attaches here"
+      ],
+      "crawl_id": [
+        "string",
+        "[I]",
+        "foreign key to R0 for gate error analysis"
+      ],
+      "ticker": [
+        "string",
+        "[S] as relation to the ~3,000-name universe",
+        "stock coordinate of the event key; whether stored once per ticker or once with a list is unstated"
+      ],
+      "company_name": [
+        "string",
+        "[I]",
+        "entity resolution when text names the company without a ticker"
+      ],
+      "exchange": [
+        "string",
+        "[I]",
+        "governs which calendar session applies"
+      ],
+      "publication_timestamp_utc": [
+        "datetime64[ns, UTC]",
+        "[S]",
+        "§3 'publication timestamp'; determines the trading day via the 16:00 NY roll"
+      ],
+      "source_domain": [
+        "string",
+        "[S]",
+        "carried from R0"
+      ],
+      "title": [
+        "string",
+        "[S]",
+        "half of title+summary embedding input"
+      ],
+      "body": [
+        "string",
+        "[S]",
+        "retained for provenance and re-labelling"
+      ],
+      "summary": [
+        "string",
+        "[S]",
+        "vendor abstractive summary; second half of the embedding input — its quality conditions story-cluster geometry"
+      ],
+      "sentiment": [
+        "string",
+        "[S]",
+        "§3 five levels; THE only source of direction in the study; store as literal string, never as int"
+      ],
+      "gate_is_financial": [
+        "boolean",
+        "[S]",
+        "§3 'financial in nature'"
+      ],
+      "gate_is_related_to_ticker": [
+        "boolean",
+        "[S]",
+        "§3 'directly related to the covered stock universe'"
+      ],
+      "gate_is_important": [
+        "boolean",
+        "[S]",
+        "§3 'important enough to keep'; this single boolean produces the 70M->4.57M cut"
+      ],
+      "gate_model_version": [
+        "string",
+        "[NS]",
+        "unidentified vendor model"
+      ],
+      "gate_prompt_version": [
+        "string",
+        "[NS]",
+        "prompt vintage changes sentiment calibration"
+      ],
+      "backfill_flag": [
+        "boolean",
+        "[I] from §3 '2023 portion was backfilled in bulk'",
+        "enables every result with and without it"
+      ]
+    },
+    "price_panel_long": {
+      "date": [
+        "datetime64[ns] tz-naive",
+        "[S] as 'daily adjusted closes'",
+        "trading DATE not instant; tz-aware storage causes off-by-one-day joins"
+      ],
+      "symbol_id": [
+        "Int32",
+        "[I]",
+        "integer key; joining on ticker strings silently merges issuers across ticker reuse"
+      ],
+      "close_adj": [
+        "float64",
+        "[S]",
+        "adjustment convention UNSTATED: total-return vs price-return differs by ~dividend yield, material against measured effects"
+      ],
+      "volume_shares": [
+        "Int64",
+        "[NS]",
+        "required because size terciles use dollar volume; note adjusted_price * raw_volume is NOT true dollar volume"
+      ]
+    },
+    "symbol_master": {
+      "symbol_id": [
+        "Int32",
+        "[I]",
+        "immutable join key; reassignment breaks reconciliation-count reproducibility"
+      ],
+      "ticker": [
+        "string",
+        "[S]",
+        "appears in news text; uppercase, no venue prefix"
+      ],
+      "exchange": [
+        "string",
+        "[I]",
+        "governs calendar session for the 16:00 roll"
+      ],
+      "currency": [
+        "string",
+        "[I]",
+        "ADRs/dual listings; unconverted cross-currency returns are a silent error"
+      ],
+      "first_price_date": [
+        "datetime64[ns]",
+        "[I]",
+        "identifies the <126-observation population that triggers the beta<=1 fallback"
+      ],
+      "last_price_date": [
+        "datetime64[ns]",
+        "[I]",
+        "events whose windows exceed it are the mechanism behind the 9.7% skip rate"
+      ],
+      "has_price_history": [
+        "boolean",
+        "[S] as '3.4% of articles reference symbols without price history'",
+        "delistings skew small => selection is non-random"
+      ],
+      "delisted_flag": [
+        "boolean",
+        "[I]",
+        "distinguishes 'never had prices' from 'stopped having prices'; opposite economic meanings"
+      ]
+    },
+    "exchange_calendar": {
+      "date": [
+        "datetime64[ns]",
+        "[S] implied by 'trading day' / 'next trading day'",
+        "missing sessions shift every CAR spanning them"
+      ],
+      "session_open": [
+        "string",
+        "[I]",
+        "local wall-clock time, stored as string by design"
+      ],
+      "session_close": [
+        "string",
+        "[S] as the 16:00 reference",
+        "on early-close days the true close is 13:00; literal 16:00 vs actual close is a fidelity fork"
+      ],
+      "early_close": [
+        "boolean",
+        "[I]",
+        "~3 per year but concentrated around holidays when news flow is itself unusual"
+      ],
+      "utc_offset_hours": [
+        "float64",
+        "[I]",
+        "(-5 EST / -4 EDT); prevents the most common replication error: fixed-offset comparison against 16:00"
+      ]
+    },
+    "teacher_response_record": {
+      "article_id": [
+        "string",
+        "[I]",
+        "join back to R1"
+      ],
+      "teacher_label": [
+        "object",
+        "[S]",
+        "7 fields; the target the student imitates"
+      ],
+      "teacher_label.primary_tag": [
+        "enum[17]",
+        "[S]",
+        null
+      ],
+      "teacher_label.secondary_tag": [
+        "enum[17|none]",
+        "[NS]",
+        "17-way-with-none vs 17 independent logits changes head geometry and loss"
+      ],
+      "teacher_label.scheduled": [
+        "boolean",
+        "[S]",
+        null
+      ],
+      "teacher_label.forward_looking": [
+        "boolean",
+        "[S]",
+        "declared but never reported in results"
+      ],
+      "teacher_label.primary_source": [
+        "boolean",
+        "[S]",
+        "declared but never reported"
+      ],
+      "teacher_label.quantified": [
+        "boolean",
+        "[S]",
+        "sharpest discriminator: quantified coverage continues, unquantified reverses"
+      ],
+      "teacher_label.rumor": [
+        "boolean",
+        "[S]",
+        "drives the entire buy-the-rumor analysis"
+      ],
+      "label_source": [
+        "string",
+        "[S]",
+        "'teacher' | 'student'; makes the classifier falsifiable ex post"
+      ],
+      "model": [
+        "string",
+        "[S]",
+        "'gpt-5-mini'"
+      ],
+      "prompt_version": [
+        "string",
+        "[NS]",
+        "without it, label drift across prompt edits is undetectable"
+      ],
+      "cost_usd": [
+        "float64",
+        "[S]",
+        "0.0002"
+      ],
+      "raw_response_text": [
+        "string",
+        "[NS]",
+        "losing it forecloses auditing whether a label came from parsing or from repair"
+      ]
+    }
+  },
+  "ingestion": {
+    "sample_window": {
+      "start": "2023-01-01",
+      "end": null
+    },
+    "raw_article_volume": 70000000,
+    "distinct_sources_lower_bound": 500000,
+    "covered_symbols": 3000,
+    "daily_url_lower_bound": 250000,
+    "retained_article_target": 4570000,
+    "require_deduplicated": true,
+    "require_financial_in_nature": true,
+    "require_related_to_universe": true,
+    "require_important": true,
+    "dedup_primary_key": null,
+    "near_duplicate_distance_threshold": null,
+    "duplicate_survivor_policy": null,
+    "publication_timezone": "America/New_York",
+    "dst_aware_conversion": true,
+    "backfill_flag_for_2023": true,
+    "backfilled_share_of_signed_ceiling": 0.03
+  },
+  "quality": {
+    "completeness_min": 0.99,
+    "uniqueness_required": 1.0,
+    "quantiles": [
+      0.01,
+      0.25,
+      0.5,
+      0.75,
+      0.99
+    ],
+    "scaled_numeric_columns": [
+      "close_adj",
+      "close_unadj",
+      "volume_shares",
+      "body_length_chars"
+    ],
+    "uniqueness_approximate_threshold": 10000,
+    "identifier_columns": {
+      "raw_crawl": [
+        [
+          "crawl_id"
+        ]
+      ],
+      "retained_articles": [
+        [
+          "article_id"
+        ]
+      ],
+      "raw_prices": [
+        [
+          "date",
+          "symbol_id"
+        ]
+      ],
+      "symbol_master": [
+        [
+          "symbol_id"
+        ]
+      ],
+      "exchange_calendar": [
+        [
+          "date",
+          "exchange"
+        ]
+      ],
+      "market_proxy_prices": [
+        [
+          "date",
+          "market_proxy_symbol"
+        ]
+      ],
+      "labeled_articles": [
+        [
+          "article_id"
+        ]
+      ]
+    },
+    "key_fields": {
+      "retained_articles": [
+        "crawl_id",
+        "article_id",
+        "publication_timestamp_utc"
+      ],
+      "raw_prices": [
+        "close_adj"
+      ],
+      "exchange_calendar": [
+        "utc_offset_hours"
+      ]
+    },
+    "beta_window_sessions": 252,
+    "beta_min_pairs": 126,
+    "beta_density_min": 0.9,
+    "concentration_max": 0.05
+  },
+  "http_status_allowlist": [
+    200,
+    301,
+    302
+  ],
+  "taxonomy": {
+    "n_event_tags": 17,
+    "n_attributes": 5,
+    "attribute_names": [
+      "scheduled",
+      "forward_looking",
+      "primary_source",
+      "quantified",
+      "rumor"
+    ],
+    "tag_names": [
+      "Earnings results",
+      "Guidance, outlook",
+      "Analyst action",
+      "Capital returns",
+      "M&A deal",
+      "Legal, regulatory",
+      "Insider, ownership",
+      "Leadership, governance",
+      "Operations, supply",
+      "Financing, dilution",
+      "Product launch",
+      "Partnership, customer",
+      "Competition",
+      "Macro through stock",
+      "Price commentary",
+      "Other corporate",
+      "Promotional content"
+    ],
+    "n_junk_categories": 2,
+    "junk_category_names": [
+      "Price commentary",
+      "Promotional content"
+    ],
+    "secondary_tag_cardinality": null,
+    "frozen_before_price_join": true,
+    "tag_definitions_published": false,
+    "attribute_definitions_published": false,
+    "legacy_pilot_tag_count": 63,
+    "legacy_pilot_documented": false
+  },
+  "gate_model": {
+    "tasks_per_call": 4,
+    "model_identity": null,
+    "model_version": null,
+    "temperature": null,
+    "top_p": null,
+    "max_output_tokens": null,
+    "sentiment_levels": 5,
+    "sentiment_level_strings": null,
+    "sentiment_scale_numeric": null,
+    "summary_length_target": null,
+    "summary_preserves_numerals": null,
+    "validation_performed": false,
+    "prompt_template": "You are a financial-news analyst. You read ONE article about a US-listed company and\nreturn a structured assessment. Return only the JSON object specified at the end.\nDo not speculate about future prices. Do not use knowledge of later events.\n\nCOMPANY: {ticker} — {company_name}\nSOURCE DOMAIN: {source_domain}\n\nARTICLE TITLE: {title}\nARTICLE BODY: {body}\n\nTASK 1 — RELEVANCE\nIs this article genuinely related to {company_name} ({ticker})?\nAnswer false if the ticker appears only in a list, if the subject is a different issuer,\nor if the piece discusses the sector without naming this company's own operations.\n\nTASK 2 — IMPORTANCE\nIs this article important enough to retain for event analysis?\nAnswer false for: pure price recitation with no new fact; sponsored or promotional\ncontent; syndicated duplicates; routine notices restating already-public filings.\n\nTASK 3 — SENTIMENT\nAssign exactly one of:\n  \"Strongly Negative\" | \"Negative\" | \"Neutral\" | \"Positive\" | \"Strongly Positive\"\nThe direction is that of the article's IMPLICATION FOR THE EQUITY, not the tone of the\nprose. Use \"Neutral\" for articles with no directional content (e.g. an appointment with\nno stated market implication, a factual filing notice, a descriptive price recap).\n\nTASK 4 — SUMMARY\nWrite 2-3 sentences. Preserve every numeric fact VERBATIM: amounts, percentages,\nratios, dates, guidance ranges, share counts.\n\nOUTPUT — exactly this JSON, nothing else:\n{\n  \"related\":   true | false,\n  \"important\": true | false,\n  \"sentiment\": \"Strongly Negative\" | \"Negative\" | \"Neutral\" | \"Positive\" | \"Strongly Positive\",\n  \"summary\":   \"<2-3 sentences>\"\n}\n"
+  },
+  "teacher": {
+    "model_name": "gpt-5-mini",
+    "host": "Azure",
+    "prompt_state": "frozen",
+    "prompt_block_order": [
+      "role",
+      "taxonomy_definitions",
+      "attribute_definitions",
+      "exemplars",
+      "output_schema"
+    ],
+    "n_exemplars": 4,
+    "exemplar_contents": null,
+    "output_format": "strict_json_schema",
+    "n_output_fields": 7,
+    "additional_properties_allowed": false,
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_output_tokens": null,
+    "cost_per_call_usd": 0.0002,
+    "prefix_caching_required": true,
+    "prompt_excludes_publication_date": true,
+    "prompt_excludes_price_or_return": true,
+    "prompt_template": "You label financial news articles for an event study. You return ONLY the JSON object\nspecified below. You do not forecast prices. You do not use knowledge of the article's\ndate or of any subsequent event.\n\n--- BLOCK 1: ROLE ---\nYou are a precise financial-event classifier with expertise in corporate finance and\nfinancial journalism. Assign exactly one primary tag from the taxonomy and, when a\nsecond economic event is genuinely present, one secondary tag. Then set the five\nbinary attributes.\n\n--- BLOCK 2: TAXONOMY (17 DEFINITIONS) ---\n{TAXONOMY_BLOCK}\n# Each injected entry has the form:\n#   <tag name> — <one-sentence definition>\n#     include: <criterion 1>; <criterion 2>\n#     exclude: <criterion 1>; <criterion 2>\n# Mandatory disambiguations to inject:\n#   Earnings results vs Guidance, outlook — if both present, primary=Earnings results,\n#     secondary=Guidance, outlook.\n#   Analyst action vs Price commentary — Analyst action requires a sell-side rating,\n#     target, or estimate change; Price commentary is content ABOUT the price move itself.\n#   Macro through stock — macro or sector news whose relevance to this issuer is\n#     inferential rather than direct.\n#   Other corporate — a genuine corporate event not covered by any other tag.\n#   Price commentary / Promotional content are the two junk categories: use them rather\n#     than forcing price-descriptive or promotional text into a real event tag.\n\n--- BLOCK 3: ATTRIBUTES (5 BINARY DEFINITIONS) ---\n{ATTRIBUTE_BLOCK}\n# scheduled       : was the event on a pre-announced calendar date?\n# forward_looking : does the article's primary content concern future periods?\n# primary_source  : does it carry a company/regulator/official release rather than a\n#                   journalistic reconstruction?\n# quantified      : does it contain at least one number CENTRAL to the event\n#                   (amount, ratio, percentage, date, guidance range)?\n# rumor           : is the central claim explicitly attributed to unnamed sources\n#                   (\"people familiar\", \"reportedly\", \"said to be\")?\n\n--- BLOCK 4: EXEMPLARS (4 FEW-SHOT PAIRS) ---\n{EXEMPLARS_BLOCK}\n# Each injected exemplar is: article title + body, then its completed 7-field label.\n# Coverage: a quantified scheduled earnings report; a rumor; an unquantified product\n# launch; one junk-category article (Price commentary).\n\n--- BLOCK 5: OUTPUT CONTRACT ---\nReturn exactly the JSON object, with no additional keys and no prose:\n{\n  \"primary_tag\":   \"<one of the 17 tag names>\",\n  \"secondary_tag\": \"<one of the 17 tag names, or \\\"none\\\">\",\n  \"scheduled\":       true | false,\n  \"forward_looking\": true | false,\n  \"primary_source\":  true | false,\n  \"quantified\":      true | false,\n  \"rumor\":           true | false\n}\n\n--- ARTICLE ---\nTITLE: {title}\nBODY:  {body}\n",
+    "response_schema": {
+      "type": "object",
+      "required": [
+        "primary_tag",
+        "secondary_tag",
+        "scheduled",
+        "forward_looking",
+        "primary_source",
+        "quantified",
+        "rumor"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "primary_tag": {
+          "type": "string",
+          "enum": "TAXONOMY.tag_names"
+        },
+        "secondary_tag": {
+          "type": "string",
+          "enum": "TAXONOMY.tag_names + ['none']"
+        },
+        "scheduled": {
+          "type": "boolean"
+        },
+        "forward_looking": {
+          "type": "boolean"
+        },
+        "primary_source": {
+          "type": "boolean"
+        },
+        "quantified": {
+          "type": "boolean"
+        },
+        "rumor": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "student": {
+    "backbone": "distilroberta-base",
+    "n_parameters": 82000000,
+    "n_heads": 7,
+    "head_outputs": [
+      "primary_tag",
+      "secondary_tag",
+      "scheduled",
+      "forward_looking",
+      "primary_source",
+      "quantified",
+      "rumor"
+    ],
+    "throughput_articles_per_sec": [
+      125,
+      160
+    ],
+    "ckpt_n_layers": 6,
+    "ckpt_hidden_size": 768,
+    "ckpt_n_attention_heads": 12,
+    "ckpt_attention_head_width": 64,
+    "ckpt_ffn_intermediate_size": 3072,
+    "ckpt_max_positions": 514,
+    "ckpt_vocab_size": 50265,
+    "ckpt_tokenizer": "byte_level_bpe",
+    "ckpt_attention_mask": "padding_only_bidirectional",
+    "ckpt_attention_scaling": "1/sqrt(head_width)",
+    "input_field": null,
+    "max_sequence_length": null,
+    "pooling": null,
+    "pooling_selected_on": null,
+    "truncation_side": null,
+    "learning_rate": null,
+    "batch_size": null,
+    "n_epochs": null,
+    "optimizer": null,
+    "weight_decay": null,
+    "warmup_fraction": null,
+    "lr_schedule": null,
+    "gradient_clip_norm": null,
+    "class_weighting": null,
+    "loss_weights": null,
+    "early_stopping_metric": null,
+    "mixed_precision": null,
+    "loss_structure": "CE(primary) + lambda_2*CE(secondary) + sum_j lambda_j*BCE(attribute_j)",
+    "heads": {
+      "primary_tag": {
+        "task": "classification",
+        "activation": "softmax",
+        "cardinality": 17
+      },
+      "secondary_tag": {
+        "task": "classification",
+        "activation": "softmax",
+        "cardinality": null
+      },
+      "scheduled": {
+        "task": "binary",
+        "activation": "sigmoid"
+      },
+      "forward_looking": {
+        "task": "binary",
+        "activation": "sigmoid"
+      },
+      "primary_source": {
+        "task": "binary",
+        "activation": "sigmoid"
+      },
+      "quantified": {
+        "task": "binary",
+        "activation": "sigmoid"
+      },
+      "rumor": {
+        "task": "binary",
+        "activation": "sigmoid"
+      }
+    }
+  },
+  "active_learning": {
+    "seed_sample_size": 29472,
+    "seed_sampling": "random",
+    "seed_rng_seed": null,
+    "first_pass_inference_n": 600000,
+    "active_learning_pool_n": 100000,
+    "acquisition_function": "lowest_confidence",
+    "confidence_scalar_definition": null,
+    "rare_tag_quota_size": null,
+    "usable_labels_from_pool": 99991,
+    "unusable_labels_from_pool": 9,
+    "merged_training_labels": 129463,
+    "validation_sample_size": 10000,
+    "deployment_confidence_threshold": 0.8,
+    "confidence_threshold_coverage": 0.85,
+    "routing_target_share": 0.15,
+    "keep_teacher_labels_when_present": true,
+    "record_label_source": true,
+    "routed_calls_implied": 634750
+  },
+  "story_clustering": {
+    "embedding_input": "title+summary",
+    "embedding_model": null,
+    "embedding_dim": null,
+    "l2_normalize_embeddings": null,
+    "mean_center_embeddings": null,
+    "cosine_threshold": 0.8,
+    "threshold_sensitivity_reported": false,
+    "intra_day_scope": [
+      "stock",
+      "primary_tag"
+    ],
+    "linkage_algorithm": null,
+    "cross_day_anchor": "frozen_first_day_centroid",
+    "centroid_frozen": true,
+    "inter_day_continuation_threshold": null,
+    "reopen_story_on_drift": true,
+    "tie_break_rule": null,
+    "followup_share_target": 0.55,
+    "embedding_input_template": "{title} || {summary}"
+  },
+  "story_lifetime": {
+    "calibration_signal": "cosine_similarity_to_first_day_centroid",
+    "calibration_criterion": null,
+    "rare_match_rate_threshold": null,
+    "max_story_age_cap_days": {
+      "M&A deal": 90,
+      "Legal, regulatory": 90,
+      "Leadership": null,
+      "Operations, supply": null,
+      "Price commentary": 2,
+      "Earnings results": null,
+      "Guidance, outlook": null,
+      "Analyst action": null,
+      "Capital returns": null,
+      "Insider, ownership": null,
+      "Financing, dilution": null,
+      "Product launch": null,
+      "Partnership, customer": null,
+      "Competition": null,
+      "Macro through stock": null,
+      "Other corporate": null,
+      "Promotional content": null
+    },
+    "measured_mean_lifetime_trading_days": {
+      "M&A deal": 12.9,
+      "Legal, regulatory": 10.6,
+      "Insider, ownership": 4.0,
+      "Analyst action": 2.5,
+      "Leadership": 2.4,
+      "Operations, supply": 2.3,
+      "Earnings results": 2.3,
+      "Capital returns": 1.6,
+      "Guidance, outlook": 1.4,
+      "Macro through stock": 1.1,
+      "Financing, dilution": 0.9,
+      "Product launch": 0.9,
+      "Competition": 0.8,
+      "Partnership": 0.8,
+      "Price commentary": 0.6,
+      "Other corporate": 0.5,
+      "Promotional": 0.4
+    }
+  },
+  "event_construction": {
+    "event_key": [
+      "stock",
+      "primary_tag",
+      "trading_day"
+    ],
+    "after_hours_cutoff_local": "16:00",
+    "after_hours_timezone": "America/New_York",
+    "roll_rule": "next_trading_day",
+    "use_actual_session_close_on_halfdays": null,
+    "impact_definition": "mean_article_sentiment",
+    "impact_weighting": "equal_per_article",
+    "neutral_rule": "all_articles_neutral",
+    "neutral_level_label": "Neutral",
+    "sign_rule": "sign_of_impact",
+    "sign_domain": [
+      -1,
+      1
+    ],
+    "sign_zero_handling": null,
+    "attention_measure": "article_count",
+    "attention_high_threshold": 10
+  },
+  "eq_a": {
+    "market_proxy": "SPY",
+    "market_index": "S&P 500",
+    "beta_estimation": "rolling_ols",
+    "beta_window_trading_days": 252,
+    "beta_min_observations": 126,
+    "beta_missing_fallback": 1.0,
+    "beta_lookahead_protection": "as_of_day_t",
+    "beta_annualization": null,
+    "risk_free_rate": null,
+    "event_windows": [
+      {
+        "name": "pre",
+        "start": -5,
+        "end": 0,
+        "includes_day0": true
+      },
+      {
+        "name": "day0",
+        "start": 0,
+        "end": 0,
+        "includes_day0": true
+      },
+      {
+        "name": "post_short",
+        "start": 1,
+        "end": 5,
+        "includes_day0": false
+      },
+      {
+        "name": "post_long",
+        "start": 6,
+        "end": 20,
+        "includes_day0": false
+      }
+    ],
+    "cumulation_rule": "sum_of_daily_AR",
+    "cumulation_arithmetic": null
+  },
+  "eq_b": {
+    "sign_applied_after_differencing": true,
+    "baseline_symbol": "b_{k,w}",
+    "baseline_definition": "mean_AR_of_neutral_events_in_size_bucket_k_over_window_w",
+    "baseline_control_group": "neutral_events",
+    "baseline_pooling_across_tags": true,
+    "baseline_pooling_weights": null,
+    "n_baseline_scalars": 12,
+    "baseline_estimation_sample": "full_neutral_sample",
+    "tag_matched_variant": true,
+    "nested_baseline_bootstrap_variant": true,
+    "report_raw_and_adjusted_side_by_side": true,
+    "claim_type": "descriptive_not_causal"
+  },
+  "bootstrap": {
+    "resampling_unit": "trading_date",
+    "n_draws": 5000,
+    "sampling_with_replacement": true,
+    "cluster_rationale": "same_day_cross_sectional_correlation",
+    "baseline_treatment_in_draws": "fixed",
+    "random_seed": null,
+    "ci_type": null,
+    "p_value_construction": null,
+    "bootstrap_failure_diagnosis": null
+  },
+  "fdr": {
+    "method": "benjamini_hochberg_step_up",
+    "n_hypotheses": 17,
+    "target_fdr": 0.05,
+    "tested_quantity": "adjusted_post_long_drift",
+    "step_up_formula": "q_(j) = min_{l>=j} (p_(l) * m / l)",
+    "boundary_band": [
+      0.05,
+      0.07
+    ],
+    "report_q_values_in_table": false
+  },
+  "size_buckets": {
+    "n_buckets": 3,
+    "bucket_labels": [
+      "small",
+      "mid",
+      "large"
+    ],
+    "size_measure": "dollar_volume",
+    "dollar_volume_definition": null,
+    "recompute_frequency": "annual",
+    "assignment": "equal_count_terciles",
+    "rank_unit": "stock",
+    "min_observations_per_year": null
+  },
+  "attribute_analysis": {
+    "scheduled": {
+      "reported": true,
+      "target_adjusted_post_long": 0.0008,
+      "target_p_value": 0.03
+    },
+    "unscheduled": {
+      "reported": true,
+      "target_adjusted_post_long": 0.0
+    },
+    "quantified": {
+      "reported": true,
+      "target_adjusted_post_long": 0.0
+    },
+    "unquantified": {
+      "reported": true,
+      "target_adjusted_post_long": -0.0012,
+      "target_p_value": 0.01
+    },
+    "rumor": {
+      "reported": true,
+      "note": "largest pre-windows"
+    },
+    "forward_looking": {
+      "reported": false
+    },
+    "primary_source": {
+      "reported": false
+    }
+  },
+  "rumor_pairing": {
+    "link_rule": "next_same_tag_non_rumor_event_same_stock",
+    "max_gap_trading_days": 60,
+    "same_stock_required": true,
+    "same_tag_required": true,
+    "confirmation_must_be_non_rumor": true,
+    "select_earliest_candidate": true,
+    "drop_unlinked_rumors": true,
+    "use_story_id_for_linking": false,
+    "prior_rumor_lookback": "prior month",
+    "prior_rumor_lookback_days": null
+  },
+  "portfolios": {
+    "entry_rule": "close_of_day_plus_5",
+    "exit_rule": "close_of_day_plus_20",
+    "holding_window_days": [
+      6,
+      20
+    ],
+    "signal_direction": "fade",
+    "benchmark_signal": "always_short_any_covered",
+    "position_weighting": "equal",
+    "rebalance_frequency": "daily",
+    "return_basis": "beta_hedged_abnormal",
+    "hedge_instrument": "index_position",
+    "hedge_ratio": "beta_from_EQ_A",
+    "cost_model": "flat_bps_per_side",
+    "cost_grid_bps_per_side": [
+      5,
+      10,
+      20
+    ],
+    "cost_applies_to_both_legs": true,
+    "borrow_fee_modeled": false,
+    "locate_availability_modeled": false,
+    "sharpe_annualization": "sqrt_252",
+    "risk_free_for_sharpe": 0.0,
+    "in_sample_diagnostic": true,
+    "size_filter": "small_cap",
+    "tag_filter_fade": [
+      "Product launch",
+      "Partnership, customer"
+    ],
+    "tag_filter_legal": [
+      "Legal, regulatory"
+    ]
+  },
+  "DEF40": {
+    "field": "portfolios.sharpe_annualization",
+    "value": {
+      "sqrt_factor": 252,
+      "risk_free": 0.0
+    },
+    "rationale": "The reported 1.35 gross Sharpe pins this convention; the exact arithmetic implies sqrt(252) scaling with a zero risk-free",
+    "severity": "low"
+  },
+  "robustness": {
+    "cut_1_new_only": {
+      "enabled": true,
+      "required_flag": "NEW"
+    },
+    "cut_2_single_tag_days": {
+      "enabled": true,
+      "required_tag_count": 1,
+      "median_tags_per_stock_day": 2,
+      "median_tags_per_stock_day_tolerance": 0.0
+    },
+    "cut_3_teacher_labels_only": {
+      "enabled": true,
+      "required_label_source": "teacher",
+      "composition_caveat_required": true
+    },
+    "acceptance_criterion": "sign_preserved_and_magnitude_similar",
+    "analyst_single_tag_share": 0.07,
+    "quiet_stock_day_definition": "no_event_and_none_in_prior_5_trading_days",
+    "quiet_lookback_trading_days": 5,
+    "year_by_year_reporting": true
+  },
+  "second_moments": {
+    "normalization": "own_stock_typical_absolute_daily_move",
+    "typical_day_estimator": null,
+    "typical_day_window": null,
+    "attention_high_threshold": 10,
+    "market_hours_window_local": [
+      "09:30",
+      "16:00"
+    ],
+    "market_hours_timezone": "America/New_York",
+    "background_drift_enters_ratios": false,
+    "typical_day_min_periods": 126
+  },
+  "source_groups": {
+    "n_groups": 6,
+    "group_labels": [
+      "Retail analysis",
+      "Portals",
+      "Mainstream media",
+      "Aggregators",
+      "Other",
+      "Press wires"
+    ],
+    "domain_to_group_mapping": null,
+    "groups_mutually_exclusive": true,
+    "aggregation_key": [
+      "stock",
+      "trading_day",
+      "tag",
+      "source_group"
+    ],
+    "individual_outlets_named": false,
+    "wire_release_detection_rule": null,
+    "publication_day_abs_move_ratio_denominator": null
+  },
+  "plotting": {
+    "n_figures": 5,
+    "n_tables": 6,
+    "generic": {
+      "value_units": "percent",
+      "event_time_x_axis": [
+        -5,
+        20
+      ],
+      "day_zero_marker": true,
+      "significance_alpha": 0.05,
+      "insignificance_style": "pale_bar"
+    },
+    "figure_1_car_curves": {
+      "x_axis_trading_days": [
+        -5,
+        20
+      ],
+      "series": [
+        "Earnings results",
+        "Analyst action",
+        "Product launch",
+        "Macro through stock",
+        "Legal, regulatory",
+        "Neutral news"
+      ],
+      "n_panels": 2,
+      "panel_left": "raw",
+      "panel_right": "net_of_background_drift",
+      "band_half_width": 2,
+      "band_type": "date_clustered_standard_error",
+      "y_quantity": "cumulative_abnormal_return_in_news_direction_pct"
+    },
+    "figure_2_background_drift": {
+      "chart_type": "grouped_bar",
+      "x_groups": [
+        "small",
+        "mid",
+        "large"
+      ],
+      "series_windows": [
+        "[-5,0]",
+        "[0]",
+        "[+1,+5]",
+        "[+6,+20]"
+      ],
+      "companion_series": "quiet_stock_days"
+    },
+    "figure_3_asymmetry_illusion": {
+      "chart_type": "grouped_bar",
+      "x_groups": [
+        "positive_news",
+        "negative_news"
+      ],
+      "series": [
+        "raw",
+        "adjusted"
+      ],
+      "expected_collapse": "both_within_0.02pct_of_zero"
+    },
+    "figure_4_tag_map": {
+      "chart_type": "horizontal_bar_with_overlay",
+      "y_axis": "17 tags sorted by adjusted post-long drift",
+      "bar_quantity": "adjusted_post_long_drift",
+      "overlay_quantity": "raw_post_long_drift",
+      "overlay_marker": "circle",
+      "window": "[+6,+20]"
+    },
+    "figure_5_cumulative_portfolios": {
+      "chart_type": "cumulative_return_line",
+      "series": [
+        "Fade small-cap launch/partnership",
+        "Short any covered small cap",
+        "Follow legal and regulatory",
+        "S&P 500 buy and hold"
+      ],
+      "highlight_series": "Fade small-cap launch/partnership",
+      "highlight_color": "orange",
+      "direction_blind_line_style": "dashed",
+      "hedge_note": "each strategy beta-hedged with a sized index position",
+      "expected_overlap": "fade and direction-blind curves superimposed"
+    }
+  },
+  "verification_targets": {
+    "raw_articles": 70000000,
+    "retained_articles": 4570000,
+    "priced_symbols": 2591,
+    "articles_without_price_history_share": 0.034,
+    "events_skipped_missing_windows_share": 0.097,
+    "total_events": 1862297,
+    "priced_events": 1681657,
+    "signed_events": 1317252,
+    "neutral_events": 364405,
+    "positive_share": 0.73,
+    "primary_tag_agreement": 0.875,
+    "agreement_at_threshold": 0.94,
+    "attribute_agreement_range": [
+      0.92,
+      0.99
+    ],
+    "corpus_fidelity": 0.95,
+    "followup_share": 0.55,
+    "pooled_car_day0": 0.00579,
+    "pooled_car_day20": 0.00204,
+    "completeness_ratio": 2.84,
+    "completeness_ratio_by_tag": {
+      "Earnings results": 1.06,
+      "Analyst action": 1.2,
+      "Guidance, outlook": 1.08
+    },
+    "background_drift_neutral": {
+      "small": -0.0092,
+      "mid": -0.0058,
+      "large": -0.0034
+    },
+    "background_drift_quiet": {
+      "small": -0.0074,
+      "mid": -0.0088,
+      "large": -0.0059
+    },
+    "raw_post_drift_positive_news": -0.0062,
+    "raw_post_drift_negative_news": 0.0063,
+    "adjusted_both_within": 0.0002,
+    "asymmetry_p_value": 0.9,
+    "raw_small_cap_reversal_monthly": -0.0041,
+    "raw_large_cap_reversal_monthly": -0.0017,
+    "raw_size_gradient_multiple": 2.4,
+    "legal_raw": 0.0029,
+    "legal_adjusted": -0.0008,
+    "legal_p": 0.22,
+    "legal_positive_share": 0.17,
+    "competition_positive_share": 0.4,
+    "rumor_events": 18618,
+    "rumor_linked": 17510,
+    "rumor_link_rate": 0.94,
+    "rumor_median_gap_days": 2,
+    "new_only_event_count": 1090000,
+    "earnings_pre_new_only": 0.0102,
+    "earnings_pre_all": 0.0141,
+    "neutral_guidance_day0_ratio": 1.29,
+    "neutral_guidance_week_ratio": 1.23,
+    "neutral_earnings_day0_ratio": 1.11,
+    "high_attention_ratio": 1.36,
+    "single_article_ratio": 1.05,
+    "in_hours_ratio": 1.18,
+    "overnight_ratio": 1.05,
+    "wire_pre_drift": -0.0006,
+    "commentary_pre_drift_range": [
+      0.008,
+      0.011
+    ],
+    "fade_portfolio": {
+      "events": 52149,
+      "ann_return": 0.158,
+      "sharpe_gross": 1.35,
+      "sharpe_net": {
+        "5bps": 1.2,
+        "10bps": 1.06,
+        "20bps": 0.77
+      }
+    },
+    "direction_blind_portfolio": {
+      "events": 260472,
+      "ann_return": 0.159,
+      "sharpe_gross": 1.35,
+      "sharpe_net": {
+        "5bps": 1.21,
+        "10bps": 1.07,
+        "20bps": 0.78
+      }
+    },
+    "legal_portfolio": {
+      "events": 46057,
+      "ann_return": 0.041,
+      "sharpe_gross": 0.66,
+      "sharpe_net": {
+        "5bps": 0.39,
+        "10bps": 0.12,
+        "20bps": -0.43
+      }
+    }
+  },
+  "table6_reference": {
+    "A": {
+      "annualized_return": 0.158,
+      "sharpe_gross": 1.35,
+      "sharpe_net_bps": {
+        "5": 1.2,
+        "10": 1.06,
+        "20": 0.77
+      },
+      "n_events": 52149
+    },
+    "B": {
+      "annualized_return": 0.159,
+      "sharpe_gross": 1.35,
+      "sharpe_net_bps": {
+        "5": 1.21,
+        "10": 1.07,
+        "20": 0.78
+      },
+      "n_events": 260472
+    },
+    "C": {
+      "annualized_return": 0.041,
+      "sharpe_gross": 0.66,
+      "sharpe_net_bps": {
+        "5": 0.39,
+        "10": 0.12,
+        "20": -0.43
+      },
+      "n_events": 46057
+    },
+    "legal_news": {
+      "cost_bps": 10,
+      "sharpe": 0.12,
+      "band": 0.15
+    }
+  },
+  "methodological_notes": {
+    "identification_logic": "[S] Difference-in-differences in event time. Treated = signed coverage; control = neutral coverage, conditioned on annual size tercile. Parallel paths is an ASSUMPTION, tested only by the tag-matched baseline variant, which weakens capital returns and zeroes the launch estimate (those two tags' neutral coverage selects dividend payers and promoted small caps).",
+    "benchmark_misfit_cancellation": "[S] Baseline and events are measured against the SAME single-beta benchmark, so additive misfit cancels; a richer factor model would shrink the baseline itself and leave adjusted estimates essentially unchanged.",
+    "sign_after_differencing_algebra": "[S] Because s is applied AFTER differencing, the baseline enters as -s*b. One negative drift therefore produces apparent reversal after good news (s=+1) and apparent continuation after bad news (s=-1). At 73% positive sentiment the pooled average is dominated by the reversal case.",
+    "mirror_image_diagnostic": "[S] Raw [+6,+20] drift is -0.62% after positive and +0.63% after negative news: near-exact mirrors of one constant |b| ~ 0.62%. If your pipeline does not reproduce this mirror, the baseline is misspecified and all downstream results are void.",
+    "generated_regressor_direction": "[S] Re-estimating the baseline inside every bootstrap draw yields the same or slightly stronger significance, so holding it fixed is CONSERVATIVE. This is the correct direction of error.",
+    "frozen_centroid_consequence": "[I] Because story centroids are frozen, an evolving story (rumor -> signed deal) is re-opened as NEW. This is why the rumor analysis CANNOT link by story id and must link by next same-tag non-rumor event — importing that proxy's weakness.",
+    "provenance_tag_correlation": "[I] Max-softmax confidence is higher for frequent classes, so the >=0.8 gate routes RARE tags to the teacher. Hence label_source is not independent of tag and the teacher-only robustness column is compositionally selected. Signs survive; the column warrants a caveat.",
+    "anticipation_vs_reporting": "[S] Sentiment is assigned to prose written about moves as well as before them. The NEW-only rerun quantifies this: earnings pre-window +1.41% -> +1.02%, i.e. follow-up coverage inflates measured anticipation by roughly one third. The claim is descriptive, not causal.",
+    "two_hop_label_error": "[S] The 10,000-article validation set is itself teacher-labelled, so 87.5%/94.0% are agreement with a pseudo-oracle. Error is two-hop (human -> teacher -> student). A human gold set is the missing control.",
+    "beta_fallback_asymmetry": "[I] The beta<=1 rule assigns full market exposure to thin-history stocks — i.e. small, recently listed names, exactly where the headline reversals live. Not stress-tested in the paper.",
+    "dollar_volume_distortion": "[I] adjusted_close * raw_volume is NOT true dollar volume, since adjusted prices are rescaled by cumulative adjustment factors. Tercile membership therefore inherits a distortion for stocks with long split/dividend histories.",
+    "width_survives_where_direction_does_not": "[S] Volatility ratios are self-referential (a stock vs its own typical day), so the background drift cancels. This is why the width results are robust to the critique that demolishes the direction results.",
+    "lookahead_immunity": "[S] No network in the study ever sees a return. The teacher labels and never forecasts; its prompt excludes date and price. Exposure is confined to pretraining on historically published text, not to any outcome variable.",
+    "volume_arithmetic_inconsistency": "[I] '>250,000 URLs/day' across ~850 trading days implies >=2e8 URLs, against a stated total of '>70 million'. Both cannot describe the whole sample; plausible readings are a ramping daily rate or a counts-vs-retains distinction.",
+    "teacher_call_arithmetic": "[I] 29,472 + 99,991 + 10,000 = 139,463, against a reported 139,464. A one-call discrepancy, immaterial to both dollar figures, but present — evidence the cost ledger was reconstructed rather than exported.",
+    "economic_significance_verdict": "[S] The fade portfolio (15.8%, Sharpe 1.35) is indistinguishable from shorting every covered small cap (15.9%, Sharpe 1.35); curves superimposed. The entire fade edge IS the background drift the estimator subtracts. Following legal news dies at 10 bps. Residual tag-map alphas are real but thin against plausible costs."
+  },
+  "defaults_registry": {
+    "DEF1": {
+      "field": "llm_api.gate.model_name",
+      "value": "gpt-4o-mini",
+      "rationale": "Smallest Azure-hosted model consistent with day-by-day vendor pipeline cost",
+      "severity": "medium"
+    },
+    "DEF2": {
+      "field": "llm_api.embedder.model_name",
+      "value": "sentence-transformers/all-MiniLM-L6-v2",
+      "rationale": "Ubiquitous sentence encoder with a 384-d output that supports whitening",
+      "severity": "high"
+    },
+    "DEF3": {
+      "field": "ingestion.sample_window.end",
+      "value": "2026-05-01",
+      "rationale": "§3 says 'to 2026' without a date; the paper's submission (Nov 2026) implies mid-2026 availability",
+      "severity": "low"
+    },
+    "DEF4": {
+      "field": "ingestion.dedup_primary_key",
+      "value": "url_canonical",
+      "rationale": "Preserves syndication chains while collapsing tracking-only duplicates",
+      "severity": "high"
+    },
+    "DEF5": {
+      "field": "ingestion.near_duplicate_distance_threshold",
+      "value": 3,
+      "rationale": "Hamming distance 3 on SimHash-64 is standard and conservative",
+      "severity": "medium"
+    },
+    "DEF6": {
+      "field": "ingestion.duplicate_survivor_policy",
+      "value": "first_published",
+      "rationale": "Preserves the true publication timestamp over fetch-order noise",
+      "severity": "medium"
+    },
+    "DEF7": {
+      "field": "ingestion.is_crawled_in_backfill_share_ceiling",
+      "value": null,
+      "rationale": "Paper does not report this; reproduction records whatever it yields",
+      "severity": "low"
+    },
+    "DEF8": {
+      "field": "taxonomy.secondary_tag_cardinality",
+      "value": 18,
+      "rationale": "17 tags + explicit 'none' is the natural formulation; the 17-sigmoid alternative is executed as an ablation",
+      "severity": "high"
+    },
+    "DEF9": {
+      "field": "gate_model.decoding",
+      "value": {
+        "temperature": 0.0,
+        "top_p": 1.0
+      },
+      "rationale": "Point-in-time sentiment requires maximum determinism",
+      "severity": "medium"
+    },
+    "DEF10": {
+      "field": "gate_model.max_output_tokens",
+      "value": 250,
+      "rationale": "Four outputs plus a 2-3 sentence summary",
+      "severity": "low"
+    },
+    "DEF11": {
+      "field": "gate_model.sentiment_scale_numeric",
+      "value": {
+        "-2": "Strongly Negative",
+        "-1": "Negative",
+        "0": "Neutral",
+        "1": "Positive",
+        "2": "Strongly Positive"
+      },
+      "rationale": "Symmetric about zero; required because event impact = mean of article sentiment and must average correctly",
+      "severity": "high"
+    },
+    "DEF12": {
+      "field": "gate_model.summary_length_target_tokens",
+      "value": 80,
+      "rationale": "Typical 2-3 sentence summary; governs the lossy-compression ratio for the story embedder",
+      "severity": "medium"
+    },
+    "DEF13": {
+      "field": "gate_model.language_filter",
+      "value": "en",
+      "rationale": "Prevents non-English contamination of `Neutral` sentiment and `quantified` attribute",
+      "severity": "medium"
+    },
+    "DEF14": {
+      "field": "teacher.decoding",
+      "value": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "seed": null,
+        "max_output_tokens": 200
+      },
+      "rationale": "Determinism as far as the API allows; no seed exposed by gpt-5-mini",
+      "severity": "high"
+    },
+    "DEF15": {
+      "field": "teacher.max_context_length_tokens",
+      "value": 8192,
+      "rationale": "Balances full-article coverage against $0.0002/call economics; establishes the teacher-student input-length mismatch (H2)",
+      "severity": "high"
+    },
+    "DEF16": {
+      "field": "student.input_field",
+      "value": "title + body",
+      "rationale": "Body preserves numerals; title alone loses them; title+summary compounds the gate's compression and would attenuate the `quantified` effect",
+      "severity": "high"
+    },
+    "DEF17": {
+      "field": "student.pooling",
+      "value": "mean",
+      "rationale": "RoBERTa trained without NSP, so [CLS] is not a learned sentence summary; mean pooling is the correct default for a RoBERTa-family encoder",
+      "severity": "high"
+    },
+    "DEF18": {
+      "field": "student.truncation_side",
+      "value": "numeral_preserving",
+      "rationale": "Head truncation + 96-token budget for numeral-bearing sentences; preserves the `quantified` attribute, which carries the paper's headline economic finding",
+      "severity": "high"
+    },
+    "DEF19": {
+      "field": "student.training_mechanics",
+      "value": {
+        "lr": 2e-05,
+        "batch": 32,
+        "epochs": 5,
+        "optimizer": "AdamW",
+        "wd": 0.01,
+        "warmup_frac": 0.06,
+        "lr_schedule": "linear",
+        "clip": 1.0,
+        "class_weighting": "inverse_frequency",
+        "early_stop": "macro_f1",
+        "patience": 2,
+        "mixed_precision": "bf16",
+        "freeze": 0
+      },
+      "rationale": "Standard supervised fine-tuning of a DistilRoBERTa multi-task head; inverse-frequency weighting is necessary because tag counts span >25×",
+      "severity": "high"
+    },
+    "DEF20": {
+      "field": "student.loss_weights",
+      "value": {
+        "primary": 1.0,
+        "secondary": 0.5,
+        "attributes": 0.5
+      },
+      "rationale": "Down-weights the auxiliary heads relative to the primary tag; the disjunction between primary and attribute performance (87.5% vs 92-99%) implies the fine-tuning balance was struck in this direction",
+      "severity": "medium"
+    },
+    "DEF21": {
+      "field": "active_learning.seed_rng_seed",
+      "value": 42,
+      "rationale": "Deterministic RNG for the 29,472 bootstrap sample draw and any downstream stochastic step",
+      "severity": "low"
+    },
+    "DEF22": {
+      "field": "active_learning.confidence_scalar_definition",
+      "value": "max_softmax_primary",
+      "rationale": "Max over the primary-tag softmax; natural confidence scalar, and the frequency-correlation consequence is handled separately by the rare-class quota",
+      "severity": "medium"
+    },
+    "DEF23": {
+      "field": "active_learning.rare_tag_quota_size",
+      "value": 500,
+      "rationale": "At least 500 routed items per tag guarantees the sparse tags attain stable learned representations",
+      "severity": "high"
+    },
+    "DEF24": {
+      "field": "story_clustering.normalization",
+      "value": "mean_center_and_whiten",
+      "rationale": "Anisotropy in raw contextual embeddings makes a raw 0.80 cosine threshold uninterpretable; whitening is the corrective",
+      "severity": "high"
+    },
+    "DEF25": {
+      "field": "story_clustering.linkage_algorithm",
+      "value": "single_link_connected_components",
+      "rationale": "Consistent with §4.2's bracketed '(threshold 0.80)' phrasing, which is directly the single-link component rule; the frozen-centroid cross-day step prevents the chaining pathology that usually argues against single-link",
+      "severity": "high"
+    },
+    "DEF26": {
+      "field": "story_clustering.inter_day_continuation_threshold",
+      "value": 0.8,
+      "rationale": "Same threshold as intra-day; lowering it risks chaining across semantically adjacent but distinct stories",
+      "severity": "high"
+    },
+    "DEF27": {
+      "field": "story_clustering.tie_break_rule",
+      "value": [
+        "smaller_story_age",
+        "most_recent_last_update",
+        "lexicographic_story_id"
+      ],
+      "rationale": "Deterministic tie-breaking for equidistant day-clusters; without it the event table is non-reproducible",
+      "severity": "high"
+    },
+    "DEF28": {
+      "field": "story_lifetime.calibration_criterion",
+      "value": "continued_match_rate_below_10th_percentile",
+      "rationale": "Makes §4.2's 'where continued matches become rare' operational; a 10th-percentile cutoff is a standard defensible rule",
+      "severity": "medium"
+    },
+    "DEF29": {
+      "field": "story_lifetime.max_story_age_cap_days.Leadership_Operations",
+      "value": 21,
+      "rationale": "§4.2 says 'weeks'; 21 trading days ≈ 3 weeks",
+      "severity": "medium"
+    },
+    "DEF30": {
+      "field": "story_lifetime.max_story_age_cap_days.<12 tags>",
+      "value": "max(2, 2 × measured_mean)",
+      "rationale": "Caps set to twice the measured mean lifetime for the 12 tags whose caps the paper does not state; generous enough to avoid truncating live stories, tight enough to prevent over-linking",
+      "severity": "high"
+    },
+    "DEF31": {
+      "field": "event_construction.use_actual_session_close_on_halfdays",
+      "value": false,
+      "rationale": "Literal 16:00 is faithful to the paper's stated rule and preserves the reported cardinalities; the economic-fidelity alternative (use `session_close`) is run as a bounded sensitivity",
+      "severity": "medium"
+    },
+    "DEF32": {
+      "field": "event_construction.sign_zero_handling",
+      "value": "majority_polarity_then_drop_if_true_tie",
+      "rationale": "Impact = 0 with mixed-polarity articles is a genuine gap in the paper; majority-polarity resolves most cases, true ties are flagged `is_mixed` and treated as robustness",
+      "severity": "high"
+    },
+    "DEF33": {
+      "field": "eq_a.beta_annualization / cumulation_arithmetic",
+      "value": {
+        "annualization": "none",
+        "cumulation": "simple_sum"
+      },
+      "rationale": "The paper's running-total figure (+0.579% → +0.204%) is a simple sum of daily AR; no annualization implied",
+      "severity": "medium"
+    },
+    "DEF34": {
+      "field": "eq_b.baseline_pooling_weights",
+      "value": "equal_weight_per_event",
+      "rationale": "§4.3's phrase 'the mean abnormal return of neutral events' is most naturally event-weighted; the calendar-weighted variant is a plausible alternative",
+      "severity": "medium"
+    },
+    "DEF35": {
+      "field": "bootstrap.ci_type / p_value_construction",
+      "value": {
+        "ci": "percentile",
+        "p": "two_sided"
+      },
+      "rationale": "Standard defaults; the studentized variant is run as a sensitivity for boundary cases",
+      "severity": "medium"
+    },
+    "DEF36": {
+      "field": "bootstrap.failure_diagnosis",
+      "value": "effective_cluster_count_rule + wild_cluster_variant",
+      "rationale": "Sparse tags (guidance, competition, capital returns, M&A) require a wild-cluster check against bootstrap degeneracy",
+      "severity": "high"
+    },
+    "DEF37": {
+      "field": "size_buckets.dollar_volume_definition",
+      "value": "close_unadj * volume_shares",
+      "rationale": "TRUE dollar volume, not the adjusted-price × raw-volume product distorted by cumulative adjustment factors",
+      "severity": "high"
+    },
+    "DEF38": {
+      "field": "size_buckets.min_observations_per_year",
+      "value": 20,
+      "rationale": "Names with fewer than 20 trading days in a year are bucketed by the previous year's assignment; prevents short-window noise",
+      "severity": "low"
+    },
+    "DEF39": {
+      "field": "rumor_pairing.prior_rumor_lookback_days",
+      "value": 21,
+      "rationale": "§5.1 says 'prior month'; 21 trading days is the standard financial-definition conversion",
+      "severity": "low"
+    },
+    "DEF40": {
+      "field": "portfolios.sharpe_annualization",
+      "value": {
+        "sqrt_factor": 252,
+        "risk_free": 0.0
+      },
+      "rationale": "The reported 1.35 gross Sharpe pins this convention; the exact arithmetic implies sqrt(252) scaling with a zero risk-free",
+      "severity": "low"
+    },
+    "DEF41": {
+      "field": "robustness.teacher_only_stratum_weights",
+      "value": "upweight_random_downweight_others",
+      "rationale": "Rare-tag enrichment in the teacher-labeled set biases the column's composition; reweighting restores representativeness",
+      "severity": "high"
+    },
+    "DEF42": {
+      "field": "second_moments.typical_day_estimator",
+      "value": {
+        "estimator": "mean_abs_ar",
+        "window": 252
+      },
+      "rationale": "Uniform denominator across the pipeline; median variant is a sensitivity",
+      "severity": "medium"
+    },
+    "DEF43": {
+      "field": "source_groups.domain_to_group_mapping",
+      "value": "rule-based classifier by known wire/aggregator/retail/mainstream/portal domains",
+      "rationale": "The paper publishes no mapping; a rule-based classifier is the only faithful reproduction, and its classification of each outlet must be reported",
+      "severity": "high"
+    },
+    "DEF44": {
+      "field": "human_gold_standard",
+      "value": "510-item tag-stratified adjudicated sample with two annotators and third-annotator conflict resolution",
+      "rationale": "Directly addresses the two-hop pseudo-oracle acknowledged in §7; per-tag precision/recall bounds the boundary q-values",
+      "severity": "high"
+    },
+    "DEF45": {
+      "field": "verification_targets.new_only_reconciliation_note",
+      "value": "provisional pending denominator reconciliation",
+      "rationale": "§5.3's 1.09M NEW-only count does not reconcile with the 55%-follow-up × 1.86M arithmetic under the natural denominators; the reproduction must document the denominator it uses",
+      "severity": "medium"
+    }
+  },
+  "unresolved_registry": {
+    "count_material": 31,
+    "count_in_text_stack": 27,
+    "entries": {
+      "ingestion": [
+        "sample_window.end",
+        "dedup_primary_key",
+        "near_duplicate_distance_threshold",
+        "duplicate_survivor_policy"
+      ],
+      "taxonomy": [
+        "secondary_tag_cardinality"
+      ],
+      "gate_model": [
+        "model_identity",
+        "model_version",
+        "prompt_template",
+        "temperature",
+        "top_p",
+        "max_output_tokens",
+        "sentiment_level_strings",
+        "sentiment_scale_numeric",
+        "summary_length_target",
+        "summary_preserves_numerals"
+      ],
+      "teacher": [
+        "exemplar_contents",
+        "temperature",
+        "top_p",
+        "seed",
+        "max_output_tokens"
+      ],
+      "student": [
+        "input_field",
+        "max_sequence_length",
+        "pooling",
+        "truncation_side",
+        "learning_rate",
+        "batch_size",
+        "n_epochs",
+        "optimizer",
+        "weight_decay",
+        "warmup_fraction",
+        "gradient_clip_norm",
+        "class_weighting",
+        "loss_weights",
+        "early_stopping_metric"
+      ],
+      "active_learning": [
+        "seed_rng_seed",
+        "confidence_scalar_definition",
+        "rare_tag_quota_size"
+      ],
+      "story_clustering": [
+        "embedding_model",
+        "embedding_dim",
+        "l2_normalize_embeddings",
+        "mean_center_embeddings",
+        "linkage_algorithm",
+        "inter_day_continuation_threshold",
+        "tie_break_rule"
+      ],
+      "story_lifetime": [
+        "calibration_criterion",
+        "rare_match_rate_threshold",
+        "twelve_of_seventeen_tag_caps"
+      ],
+      "event_construction": [
+        "use_actual_session_close_on_halfdays",
+        "sign_zero_handling"
+      ],
+      "eq_a": [
+        "beta_annualization",
+        "risk_free_rate",
+        "cumulation_arithmetic"
+      ],
+      "eq_b": [
+        "baseline_pooling_weights"
+      ],
+      "bootstrap": [
+        "random_seed",
+        "ci_type",
+        "p_value_construction"
+      ],
+      "size_buckets": [
+        "dollar_volume_definition",
+        "min_observations_per_year"
+      ],
+      "rumor_pairing": [
+        "prior_rumor_lookback_days"
+      ],
+      "portfolios": [
+        "sharpe_annualization",
+        "risk_free_for_sharpe"
+      ],
+      "second_moments": [
+        "typical_day_estimator",
+        "typical_day_window"
+      ],
+      "source_groups": [
+        "domain_to_group_mapping",
+        "wire_release_detection_rule"
+      ]
+    }
+  }
+}
