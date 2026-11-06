@@ -110,3 +110,11 @@ ipykernel==6.31.0
 # notebook never imports it. Verified with openai 3.46.0 (mocked transport,
 # no live Azure call); uncomment to install.
 # openai==3.46.0
+
+# import transformers: needed only by distilroberta_student.py, the real
+# distilroberta-base student behind the usage example's four offline student
+# services (torch is pinned above). The notebook never imports it. Verified
+# with transformers 5.22.1 on an untrained backbone of the exact
+# architecture (the pretrained weights were not downloadable in the
+# verification environment); uncomment to install.
+# transformers==5.22.1
